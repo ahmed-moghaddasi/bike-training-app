@@ -1,4 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
+import type { Session as SupabaseAuthSession } from '@supabase/supabase-js';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Platform,
@@ -25,6 +26,7 @@ import {
   latestSession,
   sessionsForContext,
 } from './src/lib/metrics';
+import { isSupabaseConfigured, saveSessionDraft, signInWithEmail, supabase } from './src/lib/supabase';
 import { colors, fonts, radius, spacing } from './src/theme';
 import type { Bike, DetectionEvent, Drill, Lap, ProgressContext, Session, SessionDraft, SetupVariant } from './src/types';
 
@@ -74,7 +76,17 @@ function pickRecordingMimeType() {
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
   const [currentBikeId, setCurrentBikeId] = useState(bikes.find((bike) => bike.isCurrent)?.id ?? bikes[0].id);
+  const [authSession, setAuthSession] = useState<SupabaseAuthSession | null>(null);
   const currentBike = bikes.find((bike) => bike.id === currentBikeId) ?? bikes[0];
+
+  useEffect(() => {
+    if (!supabase) return;
+    void supabase.auth.getSession().then(({ data }) => setAuthSession(data.session));
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthSession(session);
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
 
   function go(next: Route) {
     setRoute(next);
@@ -117,7 +129,7 @@ export default function App() {
       {route.name === 'drills' && <DrillsScreen currentBikeId={currentBikeId} go={go} />}
       {route.name === 'drill' && <DrillDetailScreen drillId={route.drillId} go={go} />}
       {route.name === 'camera' && <CameraScreen drillId={route.drillId} currentBike={currentBike} go={go} />}
-      {route.name === 'summary' && <SessionSummaryScreen drillId={route.drillId} currentBike={currentBike} draft={route.draft} go={go} />}
+      {route.name === 'summary' && <SessionSummaryScreen drillId={route.drillId} currentBike={currentBike} draft={route.draft} authSession={authSession} go={go} />}
       {route.name === 'sessions' && <SessionsScreen go={go} />}
       {route.name === 'session' && <SessionDetailScreen sessionId={route.sessionId} go={go} />}
       {route.name === 'progress' && (
@@ -587,11 +599,13 @@ function SessionSummaryScreen({
   drillId,
   currentBike,
   draft,
+  authSession,
   go,
 }: {
   drillId: string;
   currentBike: Bike;
   draft?: SessionDraft;
+  authSession: SupabaseAuthSession | null;
   go: (route: Route) => void;
 }) {
   const drill = drills.find((item) => item.id === drillId) ?? drills[0];
@@ -603,12 +617,63 @@ function SessionSummaryScreen({
   const best = times.length ? Math.min(...times) : undefined;
   const avg = times.length ? times.reduce((sum, lap) => sum + lap, 0) / times.length : undefined;
   const spread = times.length ? Math.max(...times) - Math.min(...times) : undefined;
+  const [notes, setNotes] = useState('');
+  const [email, setEmail] = useState('');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'sending-link' | 'saving' | 'saved' | 'error'>('idle');
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const isSignedIn = Boolean(authSession?.user);
 
   useEffect(() => {
     return () => {
       if (draft?.videoUri) URL.revokeObjectURL(draft.videoUri);
     };
   }, [draft?.videoUri]);
+
+  async function sendMagicLink() {
+    if (!email.trim()) {
+      setSaveStatus('error');
+      setSaveMessage('Enter your email first.');
+      return;
+    }
+    try {
+      setSaveStatus('sending-link');
+      setSaveMessage(null);
+      await signInWithEmail(email.trim());
+      setSaveStatus('idle');
+      setSaveMessage('Check your email and open the sign-in link on this phone. Then come back and tap Save Session.');
+    } catch (error) {
+      setSaveStatus('error');
+      setSaveMessage(error instanceof Error ? error.message : 'Could not send sign-in link.');
+    }
+  }
+
+  async function saveRecordedSession() {
+    if (!draft) {
+      go({ name: 'sessions' });
+      return;
+    }
+    if (!isSupabaseConfigured) {
+      setSaveStatus('error');
+      setSaveMessage('Supabase is not configured for this build.');
+      return;
+    }
+    if (!isSignedIn) {
+      setSaveStatus('error');
+      setSaveMessage('Sign in before saving this recording.');
+      return;
+    }
+    try {
+      setSaveStatus('saving');
+      setSaveMessage('Uploading session...');
+      await saveSessionDraft(draft, notes);
+      setSaveStatus('saved');
+      setSaveMessage('Session saved to Supabase.');
+      go({ name: 'sessions' });
+    } catch (error) {
+      setSaveStatus('error');
+      setSaveMessage(error instanceof Error ? error.message : 'Could not save the session.');
+    }
+  }
 
   return (
     <Page title="Session Complete" subtitle={`${drill.name} · ${setup.name} · ${currentBike.name}`}>
@@ -655,10 +720,37 @@ function SessionSummaryScreen({
       </Section>
 
       <Section label="Notes">
-        <TextInput style={styles.noteInput} multiline placeholder="What did you notice?" placeholderTextColor={colors.silverDark} />
+        <TextInput
+          style={styles.noteInput}
+          multiline
+          placeholder="What did you notice?"
+          placeholderTextColor={colors.silverDark}
+          value={notes}
+          onChangeText={setNotes}
+        />
       </Section>
 
-      <PrimaryButton label="Save Session" onPress={() => go({ name: 'sessions' })} />
+      {draft && !isSignedIn && (
+        <Section label="Cloud Save">
+          <Text style={styles.bodyText}>Sign in with email before saving recorded sessions to Supabase.</Text>
+          <TextInput
+            style={styles.singleLineInput}
+            autoCapitalize="none"
+            autoCorrect={false}
+            inputMode="email"
+            keyboardType="email-address"
+            placeholder="you@example.com"
+            placeholderTextColor={colors.silverDark}
+            value={email}
+            onChangeText={setEmail}
+          />
+          <SecondaryButton label={saveStatus === 'sending-link' ? 'Sending Link...' : 'Send Magic Link'} onPress={() => void sendMagicLink()} />
+        </Section>
+      )}
+
+      {saveMessage && <Text style={[styles.saveMessage, saveStatus === 'error' && styles.saveMessageError]}>{saveMessage}</Text>}
+
+      <PrimaryButton label={saveStatus === 'saving' ? 'Saving...' : 'Save Session'} onPress={() => void saveRecordedSession()} />
       <Pressable style={styles.discardButton} onPress={() => go({ name: 'drill', drillId })}>
         <Text style={styles.discardText}>Discard</Text>
       </Pressable>
@@ -1443,6 +1535,31 @@ const styles = StyleSheet.create({
     minHeight: 96,
     padding: 14,
     textAlignVertical: 'top',
+  },
+  singleLineInput: {
+    backgroundColor: colors.white,
+    borderColor: colors.silverMid,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    color: colors.charcoal,
+    fontFamily: fonts.body,
+    fontSize: 15,
+    marginBottom: 12,
+    marginTop: 12,
+    minHeight: 48,
+    paddingHorizontal: 14,
+  },
+  saveMessage: {
+    color: colors.charcoal,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    lineHeight: 20,
+    marginBottom: 12,
+  },
+  saveMessageError: {
+    color: colors.red,
+    fontFamily: fonts.display,
+    fontWeight: '800',
   },
   discardButton: {
     alignItems: 'center',

@@ -4,6 +4,7 @@
   "main": "index.ts",
   "dependencies": {
     "@expo/metro-runtime": "~56.0.14",
+    "@supabase/supabase-js": "^2.108.2",
     "expo": "~56.0.9",
     "expo-status-bar": "~56.0.4",
     "react": "19.2.3",
