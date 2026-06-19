@@ -27,6 +27,23 @@ function getVideoExtension(videoUri: string) {
   return 'mp4';
 }
 
+function createId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `device-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function getClientId() {
+  if (typeof window === 'undefined') return createId();
+  const key = 'apex-lab-client-id';
+  const existing = window.localStorage.getItem(key);
+  if (existing) return existing;
+  const next = createId();
+  window.localStorage.setItem(key, next);
+  return next;
+}
+
 async function blobFromUri(videoUri: string) {
   const response = await fetch(videoUri);
   if (!response.ok) throw new Error('Could not read the recorded video.');
@@ -35,19 +52,13 @@ async function blobFromUri(videoUri: string) {
 
 export async function saveSessionDraft(draft: SessionDraft, notes: string) {
   if (!supabase) throw new Error('Supabase is not configured.');
-
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-  if (userError) throw userError;
-  if (!user) throw new Error('Sign in before saving sessions.');
+  const clientId = getClientId();
 
   let videoPath: string | undefined;
   if (draft.videoUri) {
     const blob = await blobFromUri(draft.videoUri);
     const extension = getVideoExtension(blob.type || draft.videoUri);
-    videoPath = `${user.id}/${draft.startedAt.replace(/[:.]/g, '-')}-${draft.drillId}.${extension}`;
+    videoPath = `anonymous/${clientId}/${draft.startedAt.replace(/[:.]/g, '-')}-${draft.drillId}.${extension}`;
     const { error: uploadError } = await supabase.storage.from('session-videos').upload(videoPath, blob, {
       contentType: blob.type || `video/${extension}`,
       upsert: false,
@@ -63,7 +74,7 @@ export async function saveSessionDraft(draft: SessionDraft, notes: string) {
   const { data: session, error: sessionError } = await supabase
     .from('sessions')
     .insert({
-      user_id: user.id,
+      client_id: clientId,
       date: draft.endedAt,
       bike_id: draft.bikeId,
       drill_id: draft.drillId,
@@ -108,20 +119,4 @@ export async function saveSessionDraft(draft: SessionDraft, notes: string) {
   }
 
   return session.id as string;
-}
-
-export async function signInWithEmail(email: string) {
-  if (!supabase) throw new Error('Supabase is not configured.');
-  const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: origin ? { emailRedirectTo: origin } : undefined,
-  });
-  if (error) throw error;
-}
-
-export async function signOut() {
-  if (!supabase) return;
-  const { error } = await supabase.auth.signOut();
-  if (error) throw error;
 }
