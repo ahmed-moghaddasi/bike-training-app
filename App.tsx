@@ -1,20 +1,1529 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { DrillDiagram } from './src/components/DrillDiagram';
+import { LineChart } from './src/components/LineChart';
+import { HomeScreenV2 } from './src/screens/HomeScreenV2';
+import { bikes, drills, sessions } from './src/data/seed';
+import {
+  averageLap,
+  bestLap,
+  contextKey,
+  formatDate,
+  formatLap,
+  getSetupName,
+  lapSpread,
+  latestSession,
+  sessionsForContext,
+} from './src/lib/metrics';
+import { colors, fonts, radius, spacing } from './src/theme';
+import type { Bike, DetectionEvent, Drill, Lap, ProgressContext, Session, SessionDraft, SetupVariant } from './src/types';
+
+type Route =
+  | { name: 'home' }
+  | { name: 'drills' }
+  | { name: 'drill'; drillId: string }
+  | { name: 'camera'; drillId: string }
+  | { name: 'summary'; drillId: string; draft?: SessionDraft }
+  | { name: 'sessions' }
+  | { name: 'session'; sessionId: string }
+  | { name: 'progress' }
+  | { name: 'drillProgress'; context: ProgressContext };
+
+const routeTitles: Record<Route['name'], string> = {
+  home: 'Apex Lab',
+  drills: 'Drills',
+  drill: 'Drill',
+  camera: 'Camera Timer',
+  summary: 'Session Complete',
+  sessions: 'Sessions',
+  session: 'Session',
+  progress: 'Progress',
+  drillProgress: 'Drill Progress',
+};
+
+const DETECTION_INTERVAL_MS = 100;
+const DETECTION_COOLDOWN_MS = 3000;
+const DETECTION_THRESHOLD = 28;
+const DETECTION_STRIP_WIDTH = 24;
+
+const VIDEO_MIME_CANDIDATES = [
+  'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+  'video/mp4',
+  'video/webm;codecs=vp9,opus',
+  'video/webm;codecs=vp8,opus',
+  'video/webm',
+];
+
+function pickRecordingMimeType() {
+  if (typeof window === 'undefined' || !('MediaRecorder' in window)) return undefined;
+  const MediaRecorderCtor = window.MediaRecorder;
+  if (!MediaRecorderCtor.isTypeSupported) return undefined;
+  return VIDEO_MIME_CANDIDATES.find((mimeType) => MediaRecorderCtor.isTypeSupported(mimeType));
+}
 
 export default function App() {
+  const [route, setRoute] = useState<Route>({ name: 'home' });
+  const [currentBikeId, setCurrentBikeId] = useState(bikes.find((bike) => bike.isCurrent)?.id ?? bikes[0].id);
+  const currentBike = bikes.find((bike) => bike.id === currentBikeId) ?? bikes[0];
+
+  function go(next: Route) {
+    setRoute(next);
+  }
+
+  function back() {
+    if (route.name === 'home') return;
+    if (route.name === 'drill') return go({ name: 'drills' });
+    if (route.name === 'camera') return go({ name: 'drill', drillId: route.drillId });
+    if (route.name === 'summary') return go({ name: 'drill', drillId: route.drillId });
+    if (route.name === 'session') return go({ name: 'sessions' });
+    if (route.name === 'drillProgress') return go({ name: 'progress' });
+    go({ name: 'home' });
+  }
+
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
+    <SafeAreaView style={styles.screen}>
+      <StatusBar style="dark" />
+      {route.name !== 'home' && (
+        <View style={styles.topBar}>
+          <Pressable onPress={back} style={styles.backButton}>
+            <Text style={styles.backText}>←</Text>
+          </Pressable>
+          <Text style={styles.topBarTitle}>{routeTitles[route.name]}</Text>
+        </View>
+      )}
+
+      {route.name === 'home' && (
+        <HomeScreenV2
+          currentBike={currentBike}
+          currentBikeId={currentBikeId}
+          setCurrentBikeId={setCurrentBikeId}
+          onOpenDrills={() => go({ name: 'drills' })}
+          onOpenDrill={(id) => go({ name: 'drill', drillId: id })}
+          onOpenSession={(id) => go({ name: 'session', sessionId: id })}
+          onOpenSessions={() => go({ name: 'sessions' })}
+          onOpenProgress={() => go({ name: 'progress' })}
+        />
+      )}
+      {route.name === 'drills' && <DrillsScreen currentBikeId={currentBikeId} go={go} />}
+      {route.name === 'drill' && <DrillDetailScreen drillId={route.drillId} go={go} />}
+      {route.name === 'camera' && <CameraScreen drillId={route.drillId} currentBike={currentBike} go={go} />}
+      {route.name === 'summary' && <SessionSummaryScreen drillId={route.drillId} currentBike={currentBike} draft={route.draft} go={go} />}
+      {route.name === 'sessions' && <SessionsScreen go={go} />}
+      {route.name === 'session' && <SessionDetailScreen sessionId={route.sessionId} go={go} />}
+      {route.name === 'progress' && (
+        <ProgressScreen currentBikeId={currentBikeId} setCurrentBikeId={setCurrentBikeId} go={go} />
+      )}
+      {route.name === 'drillProgress' && <DrillProgressScreen context={route.context} go={go} />}
+    </SafeAreaView>
+  );
+}
+
+
+
+function DrillsScreen({ currentBikeId, go }: { currentBikeId: string; go: (route: Route) => void }) {
+  return (
+    <Page title="Drills" subtitle="Choose the setup you want to practice.">
+      <View style={styles.drillGrid}>
+        {drills.map((drill) => {
+          const setup = drill.setupVariants.find((variant) => variant.id === drill.defaultSetupVariantId);
+          const contextSessions = sessionsForContext(sessions, {
+            bikeId: currentBikeId,
+            drillId: drill.id,
+            setupVariantId: drill.defaultSetupVariantId,
+          });
+          const latest = latestSession(contextSessions);
+          const best = contextSessions.length ? Math.min(...contextSessions.map(bestLap)) : undefined;
+          return (
+            <Pressable key={drill.id} style={styles.drillLibraryCard} onPress={() => go({ name: 'drill', drillId: drill.id })}>
+              <Text style={styles.drillCardTitle}>{drill.name}</Text>
+              <DrillDiagram type={drill.diagramKey} />
+              <View style={styles.cardBottomRow}>
+                <Text style={styles.metricText}>Best: {formatLap(best)}s</Text>
+                <Text style={styles.metricText}>Last: {latest ? formatDate(latest.date, true) : 'Not yet'}</Text>
+              </View>
+              <Text style={styles.cardSub}>{setup?.name}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </Page>
+  );
+}
+
+function DrillDetailScreen({ drillId, go }: { drillId: string; go: (route: Route) => void }) {
+  const drill = drills.find((item) => item.id === drillId) ?? drills[0];
+  const setup = drill.setupVariants.find((variant) => variant.id === drill.defaultSetupVariantId) ?? drill.setupVariants[0];
+
+  return (
+    <Page title={drill.name} subtitle={drill.shortDescription}>
+      <View style={styles.contextPill}>
+        <Text style={styles.contextPillText}>{setup.name}</Text>
+      </View>
+
+      <Section label="What This Trains">
+        <Text style={styles.bodyText}>{drill.whyItMatters}</Text>
+        <BulletList items={drill.whatThisTrains} />
+      </Section>
+
+      <Section label="Setup">
+        <DrillDiagram type={drill.diagramKey} />
+        <StatGrid
+          items={[
+            ['Variant', setup.name],
+            ['Cones', String(setup.coneCount)],
+          ]}
+        />
+        <BulletList items={setup.measurements} />
+      </Section>
+
+      <Section label="Cone Placement">
+        <NumberedList items={drill.conePlacementSteps} />
+      </Section>
+
+      <Section label="Camera Placement">
+        <Text style={styles.bodyText}>{drill.cameraPlacement.positionDescription}</Text>
+        <BulletList items={[...drill.cameraPlacement.whatCameraShouldSee, `Timing: ${drill.cameraPlacement.timingPoint}`]} />
+      </Section>
+
+      <Section label="How To Ride It">
+        <NumberedList items={drill.howToRideSteps} />
+      </Section>
+
+      <Section label="Coach Notes">
+        <BulletList items={drill.coachingCues} accent />
+      </Section>
+
+      <Section label="Common Mistakes">
+        <BulletList items={drill.commonMistakes} />
+      </Section>
+
+      <Section label="Progression">
+        {drill.progressions.map((progression) => (
+          <View key={progression.title} style={styles.progressionBlock}>
+            <Text style={styles.progressionTitle}>{progression.title}</Text>
+            <Text style={styles.bodyText}>{progression.description}</Text>
+            <Text style={styles.smallLabel}>
+              {progression.comparisonType === 'newSetupVariant' ? 'New setup variant' : 'Same timing context'}
+            </Text>
+          </View>
+        ))}
+      </Section>
+
+      <PrimaryButton label="Start Recording" onPress={() => go({ name: 'camera', drillId })} />
+    </Page>
+  );
+}
+
+function CameraScreen({ drillId, currentBike, go }: { drillId: string; currentBike: Bike; go: (route: Route) => void }) {
+  const drill = drills.find((item) => item.id === drillId) ?? drills[0];
+  const setup = drill.setupVariants.find((variant) => variant.id === drill.defaultSetupVariantId) ?? drill.setupVariants[0];
+
+  if (Platform.OS !== 'web') {
+    return (
+      <Page title="Camera Timer" subtitle={`${drill.name} · ${setup.name}`}>
+        <View style={styles.cameraShell}>
+          <View style={styles.cameraView}>
+            <Text style={styles.cameraOverlay}>Web Only V1</Text>
+          </View>
+          <Text style={styles.cameraTip}>Camera timer v1 is built for iPhone Safari. Open the HTTPS web URL on your phone to test recording and lap detection.</Text>
+        </View>
+        <PrimaryButton label="Back To Drill" onPress={() => go({ name: 'drill', drillId })} />
+      </Page>
+    );
+  }
+
+  return <WebCameraTimer drill={drill} setup={setup} currentBike={currentBike} go={go} />;
+}
+
+function WebCameraTimer({
+  drill,
+  setup,
+  currentBike,
+  go,
+}: {
+  drill: Drill;
+  setup: SetupVariant;
+  currentBike: Bike;
+  go: (route: Route) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const detectionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const baselineRef = useRef<number | null>(null);
+  const lastDetectionAtRef = useRef(0);
+  const timerStartAtRef = useRef<number | null>(null);
+  const lastLapAtRef = useRef<number | null>(null);
+  const recordingStartedAtRef = useRef<string>(new Date().toISOString());
+  const detectionEventsRef = useRef<DetectionEvent[]>([]);
+  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
+  const shouldRouteOnStopRef = useRef(false);
+
+  const [cameraState, setCameraState] = useState<'loading' | 'ready' | 'recording' | 'error'>('loading');
+  const [cameraMessage, setCameraMessage] = useState('Requesting camera permission...');
+  const [laps, setLaps] = useState<Lap[]>([]);
+  const [latestOverlay, setLatestOverlay] = useState<string | null>(null);
+  const [isFlashing, setIsFlashing] = useState(false);
+
+  const latestLap = laps.at(-1);
+  const best = laps.length ? Math.min(...laps.map((lap) => lap.time)) : undefined;
+
+  function stopDetection() {
+    if (detectionTimerRef.current) {
+      clearInterval(detectionTimerRef.current);
+      detectionTimerRef.current = null;
+    }
+  }
+
+  async function releaseWakeLock() {
+    const wakeLock = wakeLockRef.current;
+    wakeLockRef.current = null;
+    if (wakeLock) {
+      try {
+        await wakeLock.release();
+      } catch {
+        // The browser may already have revoked it.
+      }
+    }
+  }
+
+  function stopCameraTracks() {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }
+
+  function cleanupCamera() {
+    stopDetection();
+    void releaseWakeLock();
+    stopCameraTracks();
+  }
+
+  async function startCamera() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraState('error');
+      setCameraMessage('This browser does not support camera access.');
+      return;
+    }
+
+    try {
+      setCameraState('loading');
+      setCameraMessage('Requesting camera permission...');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setCameraState('ready');
+      setCameraMessage(drill.cameraPlacement.detectionZoneSuggestion);
+    } catch (error) {
+      setCameraState('error');
+      setCameraMessage(error instanceof Error ? error.message : 'Camera permission was not granted.');
+    }
+  }
+
+  function flashDetection(label: string) {
+    setLatestOverlay(label);
+    setIsFlashing(true);
+    window.setTimeout(() => setIsFlashing(false), 420);
+    window.setTimeout(() => setLatestOverlay(null), 1400);
+  }
+
+  function sampleMotionScore() {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return undefined;
+
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return undefined;
+
+    const sampleHeight = 120;
+    const sourceX = Math.max(0, Math.floor(video.videoWidth / 2 - DETECTION_STRIP_WIDTH / 2));
+    canvas.width = DETECTION_STRIP_WIDTH;
+    canvas.height = sampleHeight;
+    context.drawImage(video, sourceX, 0, DETECTION_STRIP_WIDTH, video.videoHeight, 0, 0, DETECTION_STRIP_WIDTH, sampleHeight);
+
+    const pixels = context.getImageData(0, 0, DETECTION_STRIP_WIDTH, sampleHeight).data;
+    let luminanceTotal = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      luminanceTotal += pixels[index] * 0.299 + pixels[index + 1] * 0.587 + pixels[index + 2] * 0.114;
+    }
+    const average = luminanceTotal / (pixels.length / 4);
+    const baseline = baselineRef.current;
+    baselineRef.current = baseline === null ? average : baseline * 0.92 + average * 0.08;
+    return baseline === null ? 0 : Math.abs(average - baseline);
+  }
+
+  function registerDetection(score: number) {
+    const now = performance.now();
+    if (now - lastDetectionAtRef.current < DETECTION_COOLDOWN_MS) return;
+    lastDetectionAtRef.current = now;
+
+    const videoTimestamp = recorderRef.current ? (now - recordingStartPerformanceRef.current) / 1000 : 0;
+    if (timerStartAtRef.current === null) {
+      timerStartAtRef.current = now;
+      lastLapAtRef.current = now;
+      const event: DetectionEvent = {
+        eventType: 'sessionStart',
+        detectedAt: new Date().toISOString(),
+        videoTimestamp,
+        score,
+      };
+      detectionEventsRef.current = [...detectionEventsRef.current, event];
+      flashDetection('Timer Started');
+      return;
+    }
+
+    const previousLapAt = lastLapAtRef.current ?? timerStartAtRef.current;
+    const lapTime = (now - previousLapAt) / 1000;
+    const lapNumber = lapsRef.current.length + 1;
+    const lap: Lap = { lapNumber, time: lapTime, timestampInVideo: videoTimestamp };
+    const event: DetectionEvent = {
+      eventType: 'lapDetected',
+      detectedAt: new Date().toISOString(),
+      videoTimestamp,
+      lapNumber,
+      score,
+    };
+    lastLapAtRef.current = now;
+    detectionEventsRef.current = [...detectionEventsRef.current, event];
+    lapsRef.current = [...lapsRef.current, lap];
+    setLaps(lapsRef.current);
+    flashDetection(`Lap ${lapNumber} · ${formatLap(lapTime)}s`);
+  }
+
+  const recordingStartPerformanceRef = useRef(0);
+  const lapsRef = useRef<Lap[]>([]);
+
+  function startDetectionLoop() {
+    baselineRef.current = null;
+    stopDetection();
+    detectionTimerRef.current = setInterval(() => {
+      const score = sampleMotionScore();
+      if (score !== undefined && score > DETECTION_THRESHOLD) {
+        registerDetection(score);
+      }
+    }, DETECTION_INTERVAL_MS);
+  }
+
+  async function requestWakeLock() {
+    const webNavigator = navigator as Navigator & { wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> } };
+    if (!webNavigator.wakeLock) return;
+    try {
+      wakeLockRef.current = await webNavigator.wakeLock.request('screen');
+    } catch {
+      wakeLockRef.current = null;
+    }
+  }
+
+  async function startRecording() {
+    if (!streamRef.current) {
+      await startCamera();
+      if (!streamRef.current) return;
+    }
+    if (!('MediaRecorder' in window)) {
+      setCameraState('error');
+      setCameraMessage('This browser does not support video recording.');
+      return;
+    }
+
+    try {
+      chunksRef.current = [];
+      lapsRef.current = [];
+      detectionEventsRef.current = [];
+      timerStartAtRef.current = null;
+      lastLapAtRef.current = null;
+      lastDetectionAtRef.current = 0;
+      recordingStartedAtRef.current = new Date().toISOString();
+      recordingStartPerformanceRef.current = performance.now();
+      setLaps([]);
+
+      const mimeType = pickRecordingMimeType();
+      const recorder = mimeType ? new MediaRecorder(streamRef.current, { mimeType }) : new MediaRecorder(streamRef.current);
+      recorderRef.current = recorder;
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        const blobType = recorder.mimeType || chunksRef.current[0]?.type || 'video/mp4';
+        const videoUri = chunksRef.current.length ? URL.createObjectURL(new Blob(chunksRef.current, { type: blobType })) : undefined;
+        const draft: SessionDraft = {
+          drillId: drill.id,
+          setupVariantId: setup.id,
+          bikeId: currentBike.id,
+          laps: lapsRef.current,
+          videoUri,
+          videoSaved: Boolean(videoUri),
+          startedAt: recordingStartedAtRef.current,
+          endedAt: new Date().toISOString(),
+          detectionEvents: detectionEventsRef.current,
+        };
+        cleanupCamera();
+        recorderRef.current = null;
+        if (shouldRouteOnStopRef.current) {
+          shouldRouteOnStopRef.current = false;
+          go({ name: 'summary', drillId: drill.id, draft });
+        }
+      };
+      recorder.start(1000);
+      void requestWakeLock();
+      startDetectionLoop();
+      setCameraState('recording');
+      setCameraMessage('Recording. First crossing starts the timer.');
+    } catch (error) {
+      setCameraState('error');
+      setCameraMessage(error instanceof Error ? error.message : 'Recording could not start.');
+    }
+  }
+
+  function endRecording() {
+    shouldRouteOnStopRef.current = true;
+    stopDetection();
+    const recorder = recorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop();
+      return;
+    }
+    const draft: SessionDraft = {
+      drillId: drill.id,
+      setupVariantId: setup.id,
+      bikeId: currentBike.id,
+      laps: lapsRef.current,
+      videoSaved: false,
+      startedAt: recordingStartedAtRef.current,
+      endedAt: new Date().toISOString(),
+      detectionEvents: detectionEventsRef.current,
+    };
+    cleanupCamera();
+    go({ name: 'summary', drillId: drill.id, draft });
+  }
+
+  useEffect(() => {
+    void startCamera();
+    return () => {
+      shouldRouteOnStopRef.current = false;
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        recorderRef.current.onstop = null;
+        recorderRef.current.stop();
+      }
+      cleanupCamera();
+    };
+  }, []);
+
+  return (
+    <Page title="Camera Timer" subtitle={`${drill.name} · ${setup.name}`}>
+      <View style={styles.cameraShell}>
+        <View style={styles.recRow}>
+          <Text style={styles.recText}>{cameraState === 'recording' ? 'REC' : 'Aim + Calibrate'}</Text>
+          <Text style={styles.recText}>Lap {laps.length}</Text>
+        </View>
+        <View style={[styles.cameraView, isFlashing && styles.cameraViewFlash]}>
+          {React.createElement('video', {
+            ref: videoRef,
+            autoPlay: true,
+            muted: true,
+            playsInline: true,
+            style: {
+              height: '100%',
+              left: 0,
+              objectFit: 'cover',
+              position: 'absolute',
+              top: 0,
+              width: '100%',
+            },
+          })}
+          {React.createElement('canvas', {
+            ref: canvasRef,
+            style: { display: 'none' },
+          })}
+          <View style={[styles.timingLine, isFlashing && styles.timingLineFlash]} />
+          {cameraState !== 'ready' && cameraState !== 'recording' && <Text style={styles.cameraOverlay}>{cameraState === 'error' ? 'Camera Error' : 'Loading'}</Text>}
+          {latestOverlay && (
+            <View style={styles.lapFlashOverlay}>
+              <Text style={styles.lapFlashText}>{latestOverlay}</Text>
+            </View>
+          )}
+          {isFlashing && <View style={styles.cameraFlashFrame} />}
+        </View>
+        <Text style={styles.cameraTip}>{cameraMessage}</Text>
+        <View style={styles.cameraStats}>
+          <MetricMini label="Latest" value={latestLap ? `${formatLap(latestLap.time)}s` : '--'} />
+          <MetricMini label="Best" value={best ? `${formatLap(best)}s` : '--'} />
+        </View>
+      </View>
+      {cameraState === 'error' && <SecondaryButton label="Retry Camera" onPress={() => void startCamera()} />}
+      {cameraState === 'recording' ? (
+        <PrimaryButton label="End Session" onPress={endRecording} />
+      ) : (
+        <PrimaryButton label="Start Recording" onPress={() => void startRecording()} />
+      )}
+    </Page>
+  );
+}
+
+function SessionSummaryScreen({
+  drillId,
+  currentBike,
+  draft,
+  go,
+}: {
+  drillId: string;
+  currentBike: Bike;
+  draft?: SessionDraft;
+  go: (route: Route) => void;
+}) {
+  const drill = drills.find((item) => item.id === drillId) ?? drills[0];
+  const setupId = draft?.setupVariantId ?? drill.defaultSetupVariantId;
+  const setup = drill.setupVariants.find((variant) => variant.id === setupId) ?? drill.setupVariants[0];
+  const mockLaps: Lap[] = [15.62, 15.1, 14.82, 15.02, 14.94].map((time, index) => ({ lapNumber: index + 1, time }));
+  const summaryLaps = draft?.laps ?? mockLaps;
+  const times = summaryLaps.map((lap) => lap.time);
+  const best = times.length ? Math.min(...times) : undefined;
+  const avg = times.length ? times.reduce((sum, lap) => sum + lap, 0) / times.length : undefined;
+  const spread = times.length ? Math.max(...times) - Math.min(...times) : undefined;
+
+  useEffect(() => {
+    return () => {
+      if (draft?.videoUri) URL.revokeObjectURL(draft.videoUri);
+    };
+  }, [draft?.videoUri]);
+
+  return (
+    <Page title="Session Complete" subtitle={`${drill.name} · ${setup.name} · ${currentBike.name}`}>
+      <View style={styles.resultHero}>
+        <Text style={styles.resultLabel}>{draft ? 'Recorded Session' : 'New Best'}</Text>
+        <Text style={styles.resultValue}>{best ? `${formatLap(best)}s` : '--'}</Text>
+        <Text style={styles.resultSub}>{summaryLaps.length ? `${summaryLaps.length} timed lap${summaryLaps.length === 1 ? '' : 's'}` : 'Timer started, but no complete laps were detected.'}</Text>
+      </View>
+
+      {summaryLaps.length > 0 && (
+        <Section label="Lap Flow">
+          <LineChart values={times} height={130} />
+        </Section>
+      )}
+
+      <StatGrid
+        items={[
+          ['Average', avg ? `${formatLap(avg)}s` : '--'],
+          ['Laps', String(summaryLaps.length)],
+          ['Spread', spread ? `${formatLap(spread)}s` : '--'],
+        ]}
+      />
+
+      <Section label="Lap Times">
+        {summaryLaps.length ? <LapList laps={summaryLaps} /> : <EmptyState title="No laps yet" body="Try another pass through the timing line after the timer starts." />}
+      </Section>
+
+      <Section label="Video">
+        {draft?.videoUri && Platform.OS === 'web' ? (
+          React.createElement('video', {
+            src: draft.videoUri,
+            controls: true,
+            playsInline: true,
+            style: {
+              backgroundColor: colors.black,
+              borderRadius: radius.md,
+              display: 'block',
+              width: '100%',
+            },
+          })
+        ) : (
+          <Text style={styles.bodyText}>{draft ? 'Video was not saved for this run.' : 'Saved · placeholder recording attached to this mock session.'}</Text>
+        )}
+      </Section>
+
+      <Section label="Notes">
+        <TextInput style={styles.noteInput} multiline placeholder="What did you notice?" placeholderTextColor={colors.silverDark} />
+      </Section>
+
+      <PrimaryButton label="Save Session" onPress={() => go({ name: 'sessions' })} />
+      <Pressable style={styles.discardButton} onPress={() => go({ name: 'drill', drillId })}>
+        <Text style={styles.discardText}>Discard</Text>
+      </Pressable>
+    </Page>
+  );
+}
+
+function SessionsScreen({ go }: { go: (route: Route) => void }) {
+  const groups = useMemo(() => {
+    const byDate: Record<string, Session[]> = {};
+    for (const session of sessions) {
+      const key = new Date(session.date).toISOString().slice(0, 10);
+      byDate[key] = [...(byDate[key] ?? []), session];
+    }
+    return Object.entries(byDate)
+      .sort(([a], [b]) => new Date(b).getTime() - new Date(a).getTime())
+      .map(([date, group]) => ({ date, sessions: group.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) }));
+  }, []);
+
+  return (
+    <Page title="Sessions" subtitle="Review your practice history.">
+      <View style={styles.filterRow}>
+        <Text style={styles.filterChip}>All Bikes</Text>
+        <Text style={styles.filterChip}>All Drills</Text>
+      </View>
+      {groups.map((group) => {
+        const lapCount = group.sessions.reduce((sum, session) => sum + session.laps.length, 0);
+        return (
+          <Section key={group.date} label={formatDate(group.date)}>
+            <Text style={styles.dateSummary}>{group.sessions.length} session{group.sessions.length === 1 ? '' : 's'} · {lapCount} laps</Text>
+            {group.sessions.map((session) => (
+              <SessionCard key={session.id} session={session} onPress={() => go({ name: 'session', sessionId: session.id })} />
+            ))}
+          </Section>
+        );
+      })}
+    </Page>
+  );
+}
+
+function SessionDetailScreen({ sessionId, go }: { sessionId: string; go: (route: Route) => void }) {
+  const session = sessions.find((item) => item.id === sessionId) ?? sessions[0];
+  const drill = drills.find((item) => item.id === session.drillId) ?? drills[0];
+  const bike = bikes.find((item) => item.id === session.bikeId) ?? bikes[0];
+  const setup = getSetupName(drill, session.setupVariantId);
+  const best = bestLap(session);
+  const avg = averageLap(session);
+
+  return (
+    <Page title={drill.name} subtitle={`${setup} · ${bike.name} · ${formatDate(session.date)}`}>
+      <StatGrid
+        items={[
+          ['Best', `${formatLap(best)}s`],
+          ['Average', `${formatLap(avg)}s`],
+          ['Laps', String(session.laps.length)],
+          ['Spread', `${formatLap(lapSpread(session))}s`],
+        ]}
+      />
+      <Section label="Video">
+        <View style={styles.videoPlaceholder}>
+          <Text style={styles.placeholderTitle}>{session.videoSaved ? 'Video saved' : 'Video unavailable'}</Text>
+          <Text style={styles.placeholderText}>Playback component lands with the real camera phase.</Text>
+        </View>
+      </Section>
+      <Section label="Lap Times">
+        <LapList laps={session.laps} />
+      </Section>
+      <Section label="Notes">
+        <Text style={styles.bodyText}>{session.notes ?? 'No notes saved.'}</Text>
+        {session.conditions && <Text style={styles.bodyText}>Conditions: {session.conditions}</Text>}
+      </Section>
+      <View style={styles.twoCol}>
+        <SecondaryButton label="View Drill" onPress={() => go({ name: 'drill', drillId: drill.id })} />
+        <SecondaryButton
+          label="View Progress"
+          onPress={() => go({ name: 'drillProgress', context: { bikeId: bike.id, drillId: drill.id, setupVariantId: session.setupVariantId } })}
+        />
+      </View>
+    </Page>
+  );
+}
+
+function ProgressScreen({
+  currentBikeId,
+  setCurrentBikeId,
+  go,
+}: {
+  currentBikeId: string;
+  setCurrentBikeId: (id: string) => void;
+  go: (route: Route) => void;
+}) {
+  const contexts = useMemo(() => {
+    const seen = new Set<string>();
+    const rows: ProgressContext[] = [];
+    for (const session of sessions.filter((item) => item.bikeId === currentBikeId)) {
+      const context = { bikeId: session.bikeId, drillId: session.drillId, setupVariantId: session.setupVariantId };
+      const key = contextKey(context);
+      if (!seen.has(key)) {
+        seen.add(key);
+        rows.push(context);
+      }
+    }
+    return rows;
+  }, [currentBikeId]);
+
+  return (
+    <Page title="Progress" subtitle="Track improvement by drill.">
+      <Section label="Bike">
+        <View style={styles.bikeChips}>
+          {bikes.map((bike) => (
+            <Pressable key={bike.id} onPress={() => setCurrentBikeId(bike.id)} style={[styles.chip, currentBikeId === bike.id && styles.chipActive]}>
+              <Text style={[styles.chipText, currentBikeId === bike.id && styles.chipTextActive]}>{bike.name}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </Section>
+
+      {contexts.length === 0 ? (
+        <EmptyState title="No progress yet" body="Record a session on this bike to build a trend." />
+      ) : (
+        contexts.map((context) => <ProgressCard key={contextKey(context)} context={context} go={go} />)
+      )}
+    </Page>
+  );
+}
+
+function DrillProgressScreen({ context, go }: { context: ProgressContext; go: (route: Route) => void }) {
+  const drill = drills.find((item) => item.id === context.drillId) ?? drills[0];
+  const bike = bikes.find((item) => item.id === context.bikeId) ?? bikes[0];
+  const setup = getSetupName(drill, context.setupVariantId);
+  const contextSessions = sessionsForContext(sessions, context);
+  const bestBySession = contextSessions.map(bestLap);
+  const totalLaps = contextSessions.reduce((sum, session) => sum + session.laps.length, 0);
+  const best = bestBySession.length ? Math.min(...bestBySession) : undefined;
+  const latest = latestSession(contextSessions);
+
+  return (
+    <Page title={`${drill.name} Progress`} subtitle={`${bike.name} · ${setup}`}>
+      <Section label="Lap Time Over Time">
+        <LineChart values={bestBySession} height={150} />
+      </Section>
+      <StatGrid
+        items={[
+          ['Best', `${formatLap(best)}s`],
+          ['Latest Best', latest ? `${formatLap(bestLap(latest))}s` : '--'],
+          ['Sessions', String(contextSessions.length)],
+          ['Total Laps', String(totalLaps)],
+        ]}
+      />
+      <Section label="Session History">
+        {contextSessions
+          .slice()
+          .reverse()
+          .map((session) => (
+            <SessionCard key={session.id} session={session} onPress={() => go({ name: 'session', sessionId: session.id })} />
+          ))}
+      </Section>
+    </Page>
+  );
+}
+
+function ProgressCard({ context, go }: { context: ProgressContext; go: (route: Route) => void }) {
+  const drill = drills.find((item) => item.id === context.drillId) ?? drills[0];
+  const setup = getSetupName(drill, context.setupVariantId);
+  const contextSessions = sessionsForContext(sessions, context);
+  const bestBySession = contextSessions.map(bestLap);
+  const latest = latestSession(contextSessions);
+  const best = bestBySession.length ? Math.min(...bestBySession) : undefined;
+
+  return (
+    <Pressable style={styles.progressCard} onPress={() => go({ name: 'drillProgress', context })}>
+      <Text style={styles.cardTitle}>{drill.name}</Text>
+      <Text style={styles.cardSub}>{setup}</Text>
+      <LineChart values={bestBySession} height={112} />
+      <View style={styles.cardBottomRow}>
+        <Text style={styles.metricText}>Best: {formatLap(best)}s</Text>
+        <Text style={styles.metricText}>Latest: {latest ? `${formatLap(bestLap(latest))}s` : '--'}</Text>
+      </View>
+      <View style={styles.cardBottomRow}>
+        <Text style={styles.cardSub}>{contextSessions.length} session{contextSessions.length === 1 ? '' : 's'}</Text>
+        <Text style={styles.cardSub}>Last: {latest ? formatDate(latest.date, true) : 'Not yet'}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+
+function SessionCard({ session, onPress }: { session: Session; onPress: () => void }) {
+  const drill = drills.find((item) => item.id === session.drillId);
+  const bike = bikes.find((item) => item.id === session.bikeId);
+  const setup = getSetupName(drill, session.setupVariantId);
+  return (
+    <Pressable style={styles.sessionCard} onPress={onPress}>
+      <Text style={styles.cardTag}>{formatDate(session.date)}</Text>
+      <Text style={styles.cardTitle}>{drill?.name ?? session.drillId}</Text>
+      <Text style={styles.cardSub}>{setup} · {bike?.name ?? session.bikeId}</Text>
+      <View style={styles.cardBottomRow}>
+        <Text style={styles.metricText}>Best {formatLap(bestLap(session))}s</Text>
+        <Text style={styles.metricText}>Avg {formatLap(averageLap(session))}s</Text>
+        <Text style={styles.metricText}>{session.laps.length} laps</Text>
+      </View>
+      <Text style={styles.cardSub}>{session.videoSaved ? 'Video' : 'No video'}{session.notes ? ' · Notes' : ''}</Text>
+    </Pressable>
+  );
+}
+
+function Page({ children, title, subtitle }: { children: React.ReactNode; title?: string; subtitle?: string }) {
+  return (
+    <ScrollView contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
+      {title && (
+        <View style={styles.pageHeader}>
+          <Text style={styles.pageTitle}>{title}</Text>
+          {subtitle && <Text style={styles.pageSubtitle}>{subtitle}</Text>}
+        </View>
+      )}
+      {children}
+    </ScrollView>
+  );
+}
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionLabel}>{label}</Text>
+      {children}
+    </View>
+  );
+}
+
+function PrimaryButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={styles.primaryButton}>
+      <Text style={styles.primaryButtonText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function SecondaryButton({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={styles.secondaryButton}>
+      <Text style={styles.secondaryButtonText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function BulletList({ items, accent }: { items: string[]; accent?: boolean }) {
+  return (
+    <View style={styles.list}>
+      {items.map((item) => (
+        <View key={item} style={styles.listRow}>
+          <Text style={[styles.bullet, accent && styles.bulletAccent]}>•</Text>
+          <Text style={styles.bodyText}>{item}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function NumberedList({ items }: { items: string[] }) {
+  return (
+    <View style={styles.list}>
+      {items.map((item, index) => (
+        <View key={item} style={styles.listRow}>
+          <Text style={styles.number}>{index + 1}</Text>
+          <Text style={styles.bodyText}>{item}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function StatGrid({ items }: { items: [string, string][] }) {
+  return (
+    <View style={styles.statGrid}>
+      {items.map(([label, value]) => (
+        <MetricMini key={label} label={label} value={value} />
+      ))}
+    </View>
+  );
+}
+
+function MetricMini({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.statMini}>
+      <Text style={styles.statMiniValue}>{value}</Text>
+      <Text style={styles.statMiniLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function LapList({ laps }: { laps: { lapNumber: number; time: number }[] }) {
+  const best = Math.min(...laps.map((lap) => lap.time));
+  return (
+    <View style={styles.lapList}>
+      {laps.map((lap) => (
+        <View key={lap.lapNumber} style={[styles.lapRow, lap.time === best && styles.lapRowBest]}>
+          <Text style={[styles.lapNum, lap.time === best && styles.lapTextBest]}>L{lap.lapNumber}</Text>
+          <Text style={[styles.lapTime, lap.time === best && styles.lapTextBest]}>{formatLap(lap.time)}</Text>
+          {lap.time === best && <Text style={styles.pbText}>PB</Text>}
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function EmptyState({ title, body }: { title: string; body: string }) {
+  return (
+    <View style={styles.emptyState}>
+      <Text style={styles.cardTitle}>{title}</Text>
+      <Text style={styles.cardSub}>{body}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  screen: {
+    backgroundColor: colors.silver,
     flex: 1,
-    backgroundColor: '#fff',
+  },
+  page: {
+    paddingHorizontal: spacing.pageX,
+    paddingBottom: spacing.pageBottom,
+    paddingTop: 18,
+  },
+  topBar: {
     alignItems: 'center',
+    backgroundColor: colors.white,
+    borderBottomColor: colors.silverMid,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    minHeight: 54,
+    paddingHorizontal: 12,
+  },
+  backButton: {
+    alignItems: 'center',
+    height: 42,
     justifyContent: 'center',
+    width: 42,
+  },
+  backText: {
+    color: colors.charcoal,
+    fontFamily: fonts.display,
+    fontSize: 24,
+    fontWeight: '800',
+  },
+  topBarTitle: {
+    color: colors.charcoal,
+    fontFamily: fonts.display,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1.7,
+    textTransform: 'uppercase',
+  },
+  pageHeader: {
+    marginBottom: 18,
+  },
+  pageTitle: {
+    color: colors.charcoal,
+    fontFamily: fonts.display,
+    fontSize: 40,
+    fontWeight: '800',
+    letterSpacing: -0.4,
+    lineHeight: 42,
+    textTransform: 'uppercase',
+  },
+  pageSubtitle: {
+    color: colors.silverDark,
+    fontFamily: fonts.body,
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 8,
+  },
+  section: {
+    marginBottom: 20,
+  },
+  sectionLabel: {
+    borderBottomColor: colors.silverMid,
+    borderBottomWidth: 1,
+    color: colors.silverDark,
+    fontFamily: fonts.display,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.8,
+    marginBottom: 12,
+    paddingBottom: 8,
+    textTransform: 'uppercase',
+  },
+  bikeChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
+  },
+  chip: {
+    borderColor: colors.silverMid,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+  },
+  chipActive: {
+    backgroundColor: colors.red,
+    borderColor: colors.red,
+  },
+  chipText: {
+    color: colors.charcoal,
+    fontFamily: fonts.display,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  chipTextActive: {
+    color: colors.white,
+  },
+  primaryButton: {
+    alignItems: 'center',
+    backgroundColor: colors.red,
+    borderRadius: radius.pill,
+    marginBottom: 20,
+    minHeight: 54,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  primaryButtonText: {
+    color: colors.white,
+    fontFamily: fonts.display,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1.3,
+    textTransform: 'uppercase',
+  },
+  secondaryButton: {
+    alignItems: 'center',
+    borderColor: colors.charcoal,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    flex: 1,
+    minHeight: 50,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  secondaryButtonText: {
+    color: colors.charcoal,
+    fontFamily: fonts.display,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+  },
+  twoCol: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  drillGrid: {
+    gap: 14,
+  },
+  drillLibraryCard: {
+    backgroundColor: colors.white,
+    borderColor: colors.silverMid,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: 12,
+    padding: 16,
+  },
+  drillCardTitle: {
+    color: colors.charcoal,
+    fontFamily: fonts.display,
+    fontSize: 25,
+    fontWeight: '800',
+  },
+  sessionCard: {
+    backgroundColor: colors.white,
+    borderColor: colors.silverMid,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: 8,
+    marginBottom: 10,
+    padding: 16,
+  },
+  progressCard: {
+    backgroundColor: colors.white,
+    borderColor: colors.silverMid,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: 12,
+    marginBottom: 14,
+    padding: 16,
+  },
+  cardTag: {
+    color: colors.silverDark,
+    fontFamily: fonts.display,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  cardTitle: {
+    color: colors.charcoal,
+    fontFamily: fonts.display,
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  cardSub: {
+    color: colors.silverDark,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  cardBottomRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  metricText: {
+    color: colors.charcoal,
+    fontFamily: fonts.mono,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  contextPill: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.charcoal,
+    borderRadius: radius.pill,
+    marginBottom: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  contextPillText: {
+    color: colors.white,
+    fontFamily: fonts.display,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  bodyText: {
+    color: colors.charcoal,
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 15,
+    lineHeight: 23,
+  },
+  list: {
+    gap: 10,
+    marginTop: 10,
+  },
+  listRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  bullet: {
+    color: colors.charcoal,
+    fontFamily: fonts.display,
+    fontSize: 18,
+    fontWeight: '800',
+    lineHeight: 23,
+  },
+  bulletAccent: {
+    color: colors.red,
+  },
+  number: {
+    color: colors.red,
+    fontFamily: fonts.mono,
+    fontSize: 13,
+    fontWeight: '800',
+    lineHeight: 23,
+    minWidth: 18,
+  },
+  videoPlaceholder: {
+    alignItems: 'center',
+    backgroundColor: colors.charcoal,
+    borderRadius: radius.md,
+    minHeight: 150,
+    justifyContent: 'center',
+    padding: 18,
+  },
+  placeholderTitle: {
+    color: colors.white,
+    fontFamily: fonts.display,
+    fontSize: 18,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  placeholderText: {
+    color: colors.silverMid,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  statGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 18,
+  },
+  statMini: {
+    backgroundColor: colors.white,
+    borderColor: colors.silverMid,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexGrow: 1,
+    minWidth: '45%',
+    padding: 14,
+  },
+  statMiniValue: {
+    color: colors.charcoal,
+    fontFamily: fonts.mono,
+    fontSize: 19,
+    fontWeight: '800',
+  },
+  statMiniLabel: {
+    color: colors.silverDark,
+    fontFamily: fonts.display,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    marginTop: 5,
+    textTransform: 'uppercase',
+  },
+  progressionBlock: {
+    backgroundColor: colors.white,
+    borderColor: colors.silverMid,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginBottom: 10,
+    padding: 14,
+  },
+  progressionTitle: {
+    color: colors.charcoal,
+    fontFamily: fonts.display,
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  smallLabel: {
+    color: colors.red,
+    fontFamily: fonts.display,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.1,
+    marginTop: 8,
+    textTransform: 'uppercase',
+  },
+  cameraShell: {
+    backgroundColor: colors.charcoal,
+    borderRadius: radius.md,
+    marginBottom: 18,
+    padding: 12,
+  },
+  recRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  recText: {
+    color: colors.red,
+    fontFamily: fonts.display,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  cameraView: {
+    backgroundColor: colors.black,
+    borderColor: colors.silverDark,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    height: 310,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  cameraViewFlash: {
+    borderColor: colors.red,
+    borderWidth: 3,
+  },
+  timingLine: {
+    backgroundColor: colors.red,
+    bottom: 0,
+    left: '50%',
+    opacity: 0.95,
+    position: 'absolute',
+    top: 0,
+    width: 5,
+  },
+  timingLineFlash: {
+    backgroundColor: colors.white,
+    shadowColor: colors.red,
+    shadowOpacity: 0.8,
+    shadowRadius: 12,
+    width: 8,
+  },
+  cameraOverlay: {
+    color: colors.white,
+    fontFamily: fonts.display,
+    fontSize: 26,
+    fontWeight: '800',
+    left: 18,
+    position: 'absolute',
+    textTransform: 'uppercase',
+    top: 22,
+  },
+  lapFlashOverlay: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(230, 51, 42, 0.86)',
+    bottom: 0,
+    justifyContent: 'center',
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  lapFlashText: {
+    color: colors.white,
+    fontFamily: fonts.display,
+    fontSize: 30,
+    fontWeight: '800',
+    textAlign: 'center',
+    textTransform: 'uppercase',
+  },
+  cameraFlashFrame: {
+    borderColor: colors.red,
+    borderRadius: radius.sm,
+    borderWidth: 6,
+    bottom: 0,
+    left: 0,
+    opacity: 0.45,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  cameraTip: {
+    color: colors.silverMid,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 12,
+  },
+  cameraStats: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  resultHero: {
+    alignItems: 'center',
+    backgroundColor: colors.charcoal,
+    borderRadius: radius.md,
+    marginBottom: 20,
+    padding: 22,
+  },
+  resultLabel: {
+    color: colors.red,
+    fontFamily: fonts.display,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+  },
+  resultValue: {
+    color: colors.white,
+    fontFamily: fonts.mono,
+    fontSize: 52,
+    fontWeight: '800',
+    lineHeight: 62,
+  },
+  resultSub: {
+    color: colors.silverMid,
+    fontFamily: fonts.body,
+    fontSize: 13,
+  },
+  noteInput: {
+    backgroundColor: colors.white,
+    borderColor: colors.silverMid,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    color: colors.charcoal,
+    fontFamily: fonts.body,
+    fontSize: 15,
+    minHeight: 96,
+    padding: 14,
+    textAlignVertical: 'top',
+  },
+  discardButton: {
+    alignItems: 'center',
+    padding: 16,
+  },
+  discardText: {
+    color: colors.silverDark,
+    fontFamily: fonts.display,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  lapList: {
+    gap: 8,
+  },
+  lapRow: {
+    alignItems: 'center',
+    backgroundColor: colors.white,
+    borderRadius: radius.sm,
+    flexDirection: 'row',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  lapRowBest: {
+    backgroundColor: colors.charcoal,
+  },
+  lapNum: {
+    color: colors.silverDark,
+    fontFamily: fonts.display,
+    fontSize: 11,
+    fontWeight: '800',
+    width: 34,
+  },
+  lapTime: {
+    color: colors.charcoal,
+    flex: 1,
+    fontFamily: fonts.mono,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  lapTextBest: {
+    color: colors.white,
+  },
+  pbText: {
+    color: colors.red,
+    fontFamily: fonts.display,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  filterRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 18,
+  },
+  filterChip: {
+    borderColor: colors.silverMid,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    color: colors.charcoal,
+    fontFamily: fonts.display,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    textTransform: 'uppercase',
+  },
+  dateSummary: {
+    color: colors.silverDark,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    marginBottom: 10,
+  },
+  emptyState: {
+    backgroundColor: colors.white,
+    borderColor: colors.silverMid,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: 8,
+    padding: 18,
   },
 });

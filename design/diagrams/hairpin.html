@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Apex Lab — Diagram Reference</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700;800&family=Inter:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --silver: #F2F1F0;
+      --silver-mid: #D8D5D3;
+      --silver-dark: #B3AFAF;
+      --charcoal: #2B2929;
+      --red: #FF2D00;
+      --white: #FFFFFF;
+      --black: #0D0C0C;
+      --font-display: 'Outfit', sans-serif;
+      --font-body: 'Inter', sans-serif;
+      --radius-sm: 4px;
+      --radius-md: 8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      background: var(--silver);
+      color: var(--charcoal);
+      font-family: var(--font-body);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    header {
+      background: var(--charcoal);
+      color: var(--white);
+      padding: 40px 24px 32px;
+    }
+
+    .brand {
+      font-family: var(--font-display);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.2em;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+    }
+
+    .brand span { color: var(--red); }
+
+    h1 {
+      max-width: 900px;
+      font-family: var(--font-display);
+      font-size: clamp(40px, 8vw, 88px);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 0.95;
+      text-transform: uppercase;
+    }
+
+    .intro {
+      max-width: 660px;
+      color: var(--silver-dark);
+      font-size: 14px;
+      line-height: 1.65;
+      margin-top: 18px;
+    }
+
+    main {
+      display: grid;
+      gap: 28px;
+      padding: 28px 24px 56px;
+    }
+
+    .section-label {
+      align-items: center;
+      color: var(--silver-dark);
+      display: flex;
+      font-family: var(--font-display);
+      font-size: 11px;
+      font-weight: 800;
+      gap: 12px;
+      letter-spacing: 0.18em;
+      margin-bottom: 14px;
+      text-transform: uppercase;
+    }
+
+    .section-label::after {
+      background: var(--silver-mid);
+      content: '';
+      flex: 1;
+      height: 1px;
+    }
+
+    .diagram-grid {
+      display: grid;
+      gap: 20px;
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    @media (min-width: 900px) {
+      .diagram-grid { grid-template-columns: 420px minmax(0, 1fr); }
+    }
+
+    .card {
+      background: var(--white);
+      border: 1px solid var(--silver-mid);
+      border-radius: var(--radius-md);
+      padding: 18px;
+    }
+
+    .card h2 {
+      font-family: var(--font-display);
+      font-size: 22px;
+      font-weight: 800;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    .card p {
+      color: #6f6a68;
+      font-size: 13px;
+      line-height: 1.55;
+      margin-bottom: 16px;
+    }
+
+    .diagram-frame {
+      background: var(--silver);
+      border: 1px solid var(--silver-mid);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      width: 100%;
+    }
+
+    .diagram-frame.card-size {
+      aspect-ratio: 320 / 160;
+    }
+
+    .diagram-frame.detail-size {
+      aspect-ratio: 640 / 500;
+    }
+
+    .notes {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      margin-top: 18px;
+    }
+
+    .note {
+      border-left: 3px solid var(--red);
+      padding-left: 12px;
+    }
+
+    .note strong {
+      display: block;
+      font-family: var(--font-display);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+    }
+
+    .note span {
+      color: #6f6a68;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    svg {
+      display: block;
+      height: 100%;
+      width: 100%;
+    }
+
+    .rider-path {
+      fill: none;
+      stroke: var(--charcoal);
+      stroke-width: 5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-dasharray: 2 12;
+    }
+
+    .track-surface {
+      fill: rgba(216, 213, 211, 0.48);
+      stroke: rgba(43, 41, 41, 0.2);
+      stroke-width: 1.5;
+    }
+
+    .cone-body { fill: #FF7A00; }
+    .cone-hole { fill: var(--silver); }
+    .direction-arrow { fill: var(--charcoal); }
+    .camera-fov {
+      fill: rgba(255, 45, 0, 0.12);
+      stroke: rgba(255, 45, 0, 0.34);
+      stroke-width: 1.5;
+    }
+    .camera-body { fill: var(--charcoal); }
+    .camera-lens { fill: var(--silver); }
+    .dimension-line {
+      fill: none;
+      stroke: var(--red);
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .dimension-guide {
+      stroke: var(--red);
+      stroke-dasharray: 4 6;
+      stroke-linecap: round;
+      stroke-opacity: 0.58;
+      stroke-width: 1.5;
+    }
+    .dimension-label {
+      fill: var(--red);
+      font-family: var(--font-body);
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">Apex<span>Lab</span></div>
+    <h1>Diagram Reference</h1>
+    <p class="intro">
+      This is the sandbox for finalizing Apex Lab drill diagrams. Start with Figure Eight, lock the visual language,
+      then use the same system for Circle, Hairpin, and L-Turn.
+    </p>
+  </header>
+
+  <main>
+    <section>
+      <div class="section-label">Hairpin Reference</div>
+      <div class="diagram-grid">
+        <article class="card">
+          <h2>Card Diagram</h2>
+          <p>Small version for the drill library card. Cones, rider path, and direction only.</p>
+          <div class="diagram-frame card-size">
+            <svg viewBox="0 0 320 160" role="img" aria-label="Hairpin drill card diagram">
+              <rect x="1" y="1" width="318" height="158" rx="8" fill="#F2F1F0" stroke="#D8D5D3"></rect>
+              <path class="track-surface" d="M34 29 H171 A60 60 0 0 1 171 149 H52 V121 H171 A32 32 0 0 0 171 57 H34 Z"></path>
+              <path class="rider-path" d="M34 36 C124 36 191 34 203 84 C214 130 148 139 52 139"></path>
+
+              <g>
+                <circle class="cone-body" cx="79" cy="29" r="5.625"></circle><circle class="cone-hole" cx="79" cy="29" r="2.2"></circle>
+                <circle class="cone-body" cx="171" cy="29" r="5.625"></circle><circle class="cone-hole" cx="171" cy="29" r="2.2"></circle>
+                <circle class="cone-body" cx="231" cy="89" r="5.625"></circle><circle class="cone-hole" cx="231" cy="89" r="2.2"></circle>
+                <circle class="cone-body" cx="171" cy="149" r="5.625"></circle><circle class="cone-hole" cx="171" cy="149" r="2.2"></circle>
+                <circle class="cone-body" cx="79" cy="149" r="5.625"></circle><circle class="cone-hole" cx="79" cy="149" r="2.2"></circle>
+                <circle class="cone-body" cx="79" cy="57" r="5.625"></circle><circle class="cone-hole" cx="79" cy="57" r="2.2"></circle>
+                <circle class="cone-body" cx="171" cy="57" r="5.625"></circle><circle class="cone-hole" cx="171" cy="57" r="2.2"></circle>
+                <circle class="cone-body" cx="203" cy="89" r="5.625"></circle><circle class="cone-hole" cx="203" cy="89" r="2.2"></circle>
+                <circle class="cone-body" cx="171" cy="121" r="5.625"></circle><circle class="cone-hole" cx="171" cy="121" r="2.2"></circle>
+                <circle class="cone-body" cx="79" cy="121" r="5.625"></circle><circle class="cone-hole" cx="79" cy="121" r="2.2"></circle>
+              </g>
+              <g class="direction-arrow">
+                <polygon points="-5,-4 6,0 -5,4" transform="translate(104 36) rotate(0)"></polygon>
+                <polygon points="-5,-4 6,0 -5,4" transform="translate(202 103) rotate(112)"></polygon>
+                <polygon points="-5,-4 6,0 -5,4" transform="translate(102 139) rotate(180)"></polygon>
+              </g>
+            </svg>
+          </div>
+        </article>
+
+        <article class="card">
+          <h2>Detail Diagram</h2>
+          <p>Larger setup version for the drill detail page, with camera placement and key dimensions.</p>
+          <div class="diagram-frame detail-size">
+            <svg viewBox="0 0 640 500" role="img" aria-label="Hairpin drill detail diagram">
+              <rect x="1" y="1" width="638" height="498" rx="8" fill="#F2F1F0" stroke="#D8D5D3"></rect>
+              <path class="track-surface" d="M70 86 H344 A120 120 0 0 1 344 326 H106 V270 H344 A64 64 0 0 0 344 142 H70 Z"></path>
+              <path class="rider-path" d="M70 100 C250 100 384 96 408 196 C430 288 298 306 106 306"></path>
+
+              <g>
+                <circle class="cone-body" cx="160" cy="86" r="10.625"></circle><circle class="cone-hole" cx="160" cy="86" r="4.1"></circle>
+                <circle class="cone-body" cx="344" cy="86" r="10.625"></circle><circle class="cone-hole" cx="344" cy="86" r="4.1"></circle>
+                <circle class="cone-body" cx="464" cy="206" r="10.625"></circle><circle class="cone-hole" cx="464" cy="206" r="4.1"></circle>
+                <circle class="cone-body" cx="344" cy="326" r="10.625"></circle><circle class="cone-hole" cx="344" cy="326" r="4.1"></circle>
+                <circle class="cone-body" cx="160" cy="326" r="10.625"></circle><circle class="cone-hole" cx="160" cy="326" r="4.1"></circle>
+                <circle class="cone-body" cx="160" cy="142" r="10.625"></circle><circle class="cone-hole" cx="160" cy="142" r="4.1"></circle>
+                <circle class="cone-body" cx="344" cy="142" r="10.625"></circle><circle class="cone-hole" cx="344" cy="142" r="4.1"></circle>
+                <circle class="cone-body" cx="408" cy="206" r="10.625"></circle><circle class="cone-hole" cx="408" cy="206" r="4.1"></circle>
+                <circle class="cone-body" cx="344" cy="270" r="10.625"></circle><circle class="cone-hole" cx="344" cy="270" r="4.1"></circle>
+                <circle class="cone-body" cx="160" cy="270" r="10.625"></circle><circle class="cone-hole" cx="160" cy="270" r="4.1"></circle>
+              </g>
+              <g class="direction-arrow">
+                <polygon points="-10,-7 12,0 -10,7" transform="translate(210 100) rotate(0)"></polygon>
+                <polygon points="-10,-7 12,0 -10,7" transform="translate(406 234) rotate(112)"></polygon>
+                <polygon points="-10,-7 12,0 -10,7" transform="translate(206 306) rotate(180)"></polygon>
+              </g>
+              <g>
+                <line class="dimension-guide" x1="160" y1="142" x2="160" y2="50"></line>
+                <line class="dimension-guide" x1="344" y1="142" x2="344" y2="50"></line>
+                <path class="dimension-line" d="M160 50 H344 M160 40 V60 M344 40 V60"></path>
+                <text class="dimension-label" x="252" y="34" text-anchor="middle">12m brake</text>
+
+                <line class="dimension-guide" x1="160" y1="86" x2="82" y2="86"></line>
+                <line class="dimension-guide" x1="160" y1="142" x2="82" y2="142"></line>
+                <path class="dimension-line" d="M82 86 V142 M72 86 H92 M72 142 H92"></path>
+                <text class="dimension-label" x="62" y="118" text-anchor="middle" transform="rotate(-90 62 118)">3m entry lane</text>
+                <text class="dimension-label" x="160" y="166" text-anchor="middle">start</text>
+
+                <line class="dimension-guide" x1="344" y1="142" x2="344" y2="246"></line>
+                <line class="dimension-guide" x1="408" y1="206" x2="408" y2="246"></line>
+                <path class="dimension-line" d="M344 246 H408 M344 236 V256 M408 236 V256"></path>
+                <text class="dimension-label" x="320" y="251" text-anchor="end">4m horizontal</text>
+
+                <line class="dimension-guide" x1="344" y1="142" x2="520" y2="142"></line>
+                <line class="dimension-guide" x1="408" y1="206" x2="520" y2="206"></line>
+                <path class="dimension-line" d="M520 142 V206 M510 142 H530 M510 206 H530"></path>
+                <text class="dimension-label" x="548" y="179" text-anchor="middle" transform="rotate(-90 548 179)">4m vertical</text>
+
+                <line class="dimension-guide" x1="160" y1="270" x2="82" y2="270"></line>
+                <line class="dimension-guide" x1="160" y1="326" x2="82" y2="326"></line>
+                <path class="dimension-line" d="M82 270 V326 M72 270 H92 M72 326 H92"></path>
+                <text class="dimension-label" x="62" y="298" text-anchor="middle" transform="rotate(-90 62 298)">3m exit lane</text>
+
+                <line class="dimension-guide" x1="344" y1="326" x2="344" y2="362"></line>
+                <line class="dimension-guide" x1="160" y1="326" x2="160" y2="362"></line>
+                <path class="dimension-line" d="M160 362 H344 M160 352 V372 M344 352 V372"></path>
+                <text class="dimension-label" x="252" y="386" text-anchor="middle">12m exit</text>
+
+                <line class="dimension-guide" x1="160" y1="326" x2="126" y2="326"></line>
+                <line class="dimension-guide" x1="160" y1="458" x2="126" y2="458"></line>
+                <path class="dimension-line" d="M126 326 V458 M116 326 H136 M116 458 H136"></path>
+                <text class="dimension-label" x="106" y="392" text-anchor="middle" transform="rotate(-90 106 392)">6m camera</text>
+              </g>
+              <g transform="translate(160 458)">
+                <path class="camera-body" d="M-22 -15 H-11 L-6 -23 H6 L11 -15 H22 V13 H-22 Z"></path>
+                <circle class="camera-lens" cx="0" cy="-1" r="8"></circle>
+                <rect class="camera-lens" x="-17" y="-9" width="8" height="4" rx="2"></rect>
+              </g>
+            </svg>
+          </div>
+
+          <div class="notes">
+            <div class="note">
+              <strong>Cones</strong>
+              <span>Orange circles with a center hole, drawn like street cones from above.</span>
+            </div>
+            <div class="note">
+              <strong>Path</strong>
+              <span>Dotted line shows where the rider travels around the outside of the cone layout.</span>
+            </div>
+            <div class="note">
+              <strong>Rule</strong>
+              <span>The rider path should not run through cone centers. Cones are references, not the riding line.</span>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

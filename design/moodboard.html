@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Apex Lab — Design Moodboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;700;800&family=Inter:wght@300;400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ─── TOKENS ─────────────────────────────────────────────────────── */
+    :root {
+      --silver:      #F2F1F0;   /* Audi F1 warm off-white — main bg */
+      --silver-mid:  #D8D5D3;   /* card borders, dividers            */
+      --silver-dark: #B3AFAF;   /* secondary labels, inactive states */
+      --charcoal:    #2B2929;   /* Audi F1 near-black — primary text */
+      --red:         #FF2D00;   /* Audi F1 red — primary accent      */
+      --white:       #FFFFFF;
+      --black:       #0D0C0C;
+
+      --font-display: 'Outfit', sans-serif;
+      --font-body:    'Inter', sans-serif;
+
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-pill: 999px;
+    }
+
+    /* ─── RESET ──────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 16px; }
+    body {
+      background: var(--silver);
+      color: var(--charcoal);
+      font-family: var(--font-body);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ─── NAV ────────────────────────────────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--white);
+      border-bottom: 1px solid var(--silver-mid);
+      display: flex;
+      align-items: center;
+      gap: 0;
+      padding: 0 40px;
+      height: 64px;
+    }
+    .nav-logo {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 18px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--charcoal);
+      margin-right: 32px;
+    }
+    .nav-logo span { color: var(--red); }
+    .nav-divider {
+      width: 1px;
+      height: 24px;
+      background: var(--silver-mid);
+      margin-right: 32px;
+    }
+    .nav-links {
+      display: flex;
+      gap: 28px;
+      list-style: none;
+      flex: 1;
+    }
+    .nav-links a {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--charcoal);
+      text-decoration: none;
+      opacity: 0.7;
+    }
+    .nav-links a:hover { opacity: 1; }
+    .nav-cta {
+      background: var(--red);
+      color: var(--white);
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 12px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 10px 22px;
+      border: none;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+    }
+
+    /* ─── HERO ───────────────────────────────────────────────────────── */
+    .hero {
+      position: relative;
+      height: 88vh;
+      background: var(--charcoal);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .hero-bg-text {
+      position: absolute;
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 28vw;
+      letter-spacing: -0.04em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.04);
+      user-select: none;
+      white-space: nowrap;
+    }
+    .hero-eyebrow {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--red);
+      margin-bottom: 20px;
+    }
+    .hero-headline {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: clamp(52px, 7vw, 96px);
+      line-height: 1.0;
+      letter-spacing: -0.02em;
+      text-transform: uppercase;
+      color: var(--white);
+      text-align: center;
+      z-index: 1;
+    }
+    .hero-headline em {
+      font-style: normal;
+      color: var(--red);
+    }
+    .hero-sub {
+      margin-top: 24px;
+      font-family: var(--font-body);
+      font-weight: 300;
+      font-size: 16px;
+      color: var(--silver-dark);
+      letter-spacing: 0.03em;
+      z-index: 1;
+    }
+    .hero-actions {
+      margin-top: 40px;
+      display: flex;
+      gap: 16px;
+      z-index: 1;
+    }
+    .btn-primary {
+      background: var(--red);
+      color: var(--white);
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 14px 32px;
+      border: none;
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+    }
+    .btn-ghost {
+      background: transparent;
+      color: var(--silver-dark);
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 14px 32px;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: var(--radius-pill);
+      cursor: pointer;
+    }
+    .hero-ticker {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--red);
+      color: var(--white);
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      padding: 12px 40px;
+      display: flex;
+      gap: 60px;
+      overflow: hidden;
+    }
+    .hero-ticker span { white-space: nowrap; opacity: 0.7; }
+    .hero-ticker span.active { opacity: 1; }
+
+    /* ─── SECTION SHELL ──────────────────────────────────────────────── */
+    section { padding: 80px 40px; }
+    .section-label {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--silver-dark);
+      margin-bottom: 32px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .section-label::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--silver-mid);
+    }
+
+    /* ─── COLOUR PALETTE ─────────────────────────────────────────────── */
+    .palette-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 16px;
+    }
+    .swatch {
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      border: 1px solid var(--silver-mid);
+    }
+    .swatch-color {
+      height: 100px;
+    }
+    .swatch-info {
+      padding: 12px 14px;
+      background: var(--white);
+    }
+    .swatch-name {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 12px;
+      color: var(--charcoal);
+      margin-bottom: 2px;
+    }
+    .swatch-hex {
+      font-family: var(--font-body);
+      font-weight: 400;
+      font-size: 11px;
+      color: var(--silver-dark);
+    }
+    .swatch-role {
+      font-family: var(--font-body);
+      font-size: 10px;
+      color: var(--silver-dark);
+      margin-top: 4px;
+    }
+
+    /* ─── TYPOGRAPHY SCALE ───────────────────────────────────────────── */
+    .type-section { background: var(--white); }
+    .type-row {
+      display: flex;
+      align-items: baseline;
+      gap: 24px;
+      padding: 20px 0;
+      border-bottom: 1px solid var(--silver-mid);
+    }
+    .type-row:last-child { border-bottom: none; }
+    .type-meta {
+      width: 140px;
+      flex-shrink: 0;
+      font-family: var(--font-body);
+      font-size: 10px;
+      color: var(--silver-dark);
+      line-height: 1.6;
+    }
+    .type-specimen-d1 { font-family: var(--font-display); font-weight: 800; font-size: 64px; line-height: 1.0; letter-spacing: -0.02em; text-transform: uppercase; color: var(--charcoal); }
+    .type-specimen-d2 { font-family: var(--font-display); font-weight: 800; font-size: 40px; line-height: 1.05; letter-spacing: -0.01em; text-transform: uppercase; color: var(--charcoal); }
+    .type-specimen-h1 { font-family: var(--font-display); font-weight: 700; font-size: 28px; line-height: 1.15; color: var(--charcoal); }
+    .type-specimen-h2 { font-family: var(--font-display); font-weight: 700; font-size: 20px; line-height: 1.2; color: var(--charcoal); }
+    .type-specimen-label { font-family: var(--font-display); font-weight: 700; font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--silver-dark); }
+    .type-specimen-body { font-family: var(--font-body); font-weight: 400; font-size: 15px; line-height: 1.6; color: var(--charcoal); max-width: 560px; }
+    .type-specimen-mono { font-family: 'SF Mono', 'Fira Code', monospace; font-weight: 600; font-size: 32px; letter-spacing: 0.04em; color: var(--charcoal); }
+    .type-red { color: var(--red) !important; }
+
+    /* ─── COMPONENT CARDS ────────────────────────────────────────────── */
+    .components-section { background: var(--silver); }
+    .cards-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      margin-bottom: 40px;
+    }
+
+    /* Session card */
+    .card {
+      background: var(--white);
+      border: 1px solid var(--silver-mid);
+      border-radius: var(--radius-md);
+      padding: 24px;
+      position: relative;
+    }
+    .card-tag {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--silver-dark);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .card-arrow {
+      color: var(--red);
+      font-size: 16px;
+    }
+    .card-title {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 20px;
+      color: var(--charcoal);
+      margin-bottom: 8px;
+    }
+    .card-sub {
+      font-family: var(--font-body);
+      font-size: 13px;
+      color: var(--silver-dark);
+      margin-bottom: 20px;
+    }
+    .card-stat-row {
+      display: flex;
+      gap: 20px;
+    }
+    .stat {
+      flex: 1;
+    }
+    .stat-value {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-weight: 700;
+      font-size: 22px;
+      letter-spacing: 0.02em;
+      color: var(--charcoal);
+      line-height: 1;
+    }
+    .stat-value.best { color: var(--red); }
+    .stat-label {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--silver-dark);
+      margin-top: 4px;
+    }
+
+    /* Dark card variant */
+    .card-dark {
+      background: var(--charcoal);
+      border-color: transparent;
+    }
+    .card-dark .card-tag  { color: var(--silver-dark); }
+    .card-dark .card-title { color: var(--white); }
+    .card-dark .card-sub  { color: var(--silver-dark); }
+    .card-dark .stat-value { color: var(--white); }
+    .card-dark .stat-value.best { color: var(--red); }
+    .card-dark .stat-label { color: var(--silver-dark); }
+
+    /* Drill card */
+    .card-drill {
+      border-left: 3px solid var(--red);
+    }
+    .drill-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255,45,0,0.08);
+      color: var(--red);
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: var(--radius-sm);
+      margin-bottom: 16px;
+    }
+
+    /* Lap time row */
+    .lap-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .lap-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      background: var(--silver);
+      border-radius: var(--radius-sm);
+    }
+    .lap-num {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      color: var(--silver-dark);
+      width: 24px;
+    }
+    .lap-time {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-weight: 700;
+      font-size: 16px;
+      color: var(--charcoal);
+      flex: 1;
+    }
+    .lap-delta {
+      font-family: var(--font-body);
+      font-size: 12px;
+      font-weight: 500;
+    }
+    .lap-delta.fast { color: #1DB954; }
+    .lap-delta.slow { color: var(--red); }
+    .lap-row.pb {
+      background: var(--charcoal);
+    }
+    .lap-row.pb .lap-num   { color: var(--silver-mid); }
+    .lap-row.pb .lap-time  { color: var(--white); }
+
+    /* Progress bar */
+    .progress-bar-wrap {
+      margin-top: 16px;
+    }
+    .progress-bar-label {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--silver-dark);
+      margin-bottom: 6px;
+    }
+    .progress-track {
+      height: 3px;
+      background: var(--silver-mid);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: var(--red);
+      border-radius: 2px;
+    }
+
+    /* ─── BUTTON ROW ─────────────────────────────────────────────────── */
+    .buttons-section { background: var(--white); }
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: center;
+    }
+    .btn { font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; padding: 13px 28px; border-radius: var(--radius-pill); border: none; cursor: pointer; }
+    .btn-red   { background: var(--red); color: var(--white); }
+    .btn-dark  { background: var(--charcoal); color: var(--white); }
+    .btn-outline { background: transparent; color: var(--charcoal); border: 1.5px solid var(--charcoal); }
+    .btn-outline-red { background: transparent; color: var(--red); border: 1.5px solid var(--red); }
+    .btn-silver { background: var(--silver); color: var(--charcoal); border: 1px solid var(--silver-mid); }
+
+    /* Square / icon buttons */
+    .btn-icon { width: 44px; height: 44px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; font-size: 18px; padding: 0; }
+
+    /* ─── STATEMENT SECTION ──────────────────────────────────────────── */
+    .statement-section {
+      background: var(--silver);
+      padding: 100px 40px;
+    }
+    .statement-text {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: clamp(32px, 4vw, 56px);
+      line-height: 1.1;
+      color: var(--charcoal);
+      max-width: 900px;
+    }
+    .statement-text .fade { color: var(--silver-dark); }
+    .statement-text .accent { color: var(--red); }
+
+    /* ─── DARK FULL-WIDTH BAND ───────────────────────────────────────── */
+    .dark-band {
+      background: var(--charcoal);
+      padding: 80px 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 60px;
+    }
+    .dark-band-headline {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 40px;
+      line-height: 1.05;
+      letter-spacing: -0.01em;
+      text-transform: uppercase;
+      color: var(--white);
+      flex: 1;
+    }
+    .dark-band-body {
+      flex: 1;
+      font-family: var(--font-body);
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--silver-dark);
+    }
+
+    /* ─── STAT BAND ──────────────────────────────────────────────────── */
+    .stat-band {
+      background: var(--white);
+      border-top: 1px solid var(--silver-mid);
+      border-bottom: 1px solid var(--silver-mid);
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+    }
+    .stat-cell {
+      padding: 40px 40px;
+      border-right: 1px solid var(--silver-mid);
+    }
+    .stat-cell:last-child { border-right: none; }
+    .stat-cell-value {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 48px;
+      letter-spacing: -0.02em;
+      line-height: 1;
+      color: var(--charcoal);
+    }
+    .stat-cell-value span { color: var(--red); }
+    .stat-cell-label {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--silver-dark);
+      margin-top: 8px;
+    }
+
+    /* ─── MOODBOARD META HEADER ──────────────────────────────────────── */
+    .meta-header {
+      background: var(--charcoal);
+      color: var(--white);
+      padding: 48px 40px 40px;
+    }
+    .meta-header h1 {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 13px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--red);
+      margin-bottom: 12px;
+    }
+    .meta-header p {
+      font-family: var(--font-body);
+      font-size: 13px;
+      color: var(--silver-dark);
+      line-height: 1.6;
+      max-width: 560px;
+    }
+    .meta-sources {
+      margin-top: 16px;
+      display: flex;
+      gap: 24px;
+    }
+    .meta-source {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--silver-dark);
+    }
+    .meta-source span { color: var(--white); }
+  </style>
+</head>
+<body>
+
+  <!-- ── META HEADER ────────────────────────────────────────────────── -->
+  <div class="meta-header">
+    <h1>Apex Lab — Design Moodboard</h1>
+    <p>Color palette sourced from Audi F1 / Revolut F1 Team site. Typography and layout language adapted from Grenergy.eu. Lap time numerals use a monospaced font for fixed-width digit rendering.</p>
+    <div class="meta-sources">
+      <div class="meta-source">Colors → <span>audif1.com</span></div>
+      <div class="meta-source">Font + Layout → <span>grenergy.eu (Jeko → Outfit)</span></div>
+      <div class="meta-source">Livery ref → <span>Audi F1 · Honda F4I Silver/Red</span></div>
+    </div>
+  </div>
+
+  <!-- ── NAV ────────────────────────────────────────────────────────── -->
+  <nav>
+    <div class="nav-logo">Apex<span>Lab</span></div>
+    <div class="nav-divider"></div>
+    <ul class="nav-links">
+      <li><a href="#">Drills</a></li>
+      <li><a href="#">Sessions</a></li>
+      <li><a href="#">Progress</a></li>
+      <li><a href="#">Bikes</a></li>
+    </ul>
+    <button class="nav-cta">Start Session</button>
+  </nav>
+
+  <!-- ── HERO ───────────────────────────────────────────────────────── -->
+  <section class="hero" style="padding:0;">
+    <div class="hero-bg-text">APEX</div>
+    <div class="hero-eyebrow">MotoGP Training Platform</div>
+    <h1 class="hero-headline">Train like<br/>a <em>racer</em></h1>
+    <p class="hero-sub">Timed drills · Lap analysis · Real progress</p>
+    <div class="hero-actions">
+      <button class="btn-primary">Start Training</button>
+      <button class="btn-ghost">View Drills</button>
+    </div>
+    <div class="hero-ticker">
+      <span class="active">Figure Eight · 14.82s PB</span>
+      <span>Hairpin · 9.41s PB</span>
+      <span>L-Turn · 11.05s PB</span>
+      <span>L-Turn · 11.05s PB</span>
+      <span class="active">Pitbike 160 · Last session Jun 8</span>
+    </div>
+  </section>
+
+  <!-- ── COLOUR PALETTE ─────────────────────────────────────────────── -->
+  <section style="background: var(--white);">
+    <div class="section-label">Colour Palette</div>
+    <div class="palette-grid">
+      <div class="swatch">
+        <div class="swatch-color" style="background:#F2F1F0;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Silver</div>
+          <div class="swatch-hex">#F2F1F0</div>
+          <div class="swatch-role">Main background</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background:#D8D5D3;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Silver Mid</div>
+          <div class="swatch-hex">#D8D5D3</div>
+          <div class="swatch-role">Borders · dividers</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background:#B3AFAF;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Silver Dark</div>
+          <div class="swatch-hex">#B3AFAF</div>
+          <div class="swatch-role">Secondary labels</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background:#2B2929;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Charcoal</div>
+          <div class="swatch-hex">#2B2929</div>
+          <div class="swatch-role">Primary text · dark bg</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background:#FF2D00;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">Audi Red</div>
+          <div class="swatch-hex">#FF2D00</div>
+          <div class="swatch-role">CTA · accent · PB lap</div>
+        </div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background:#FFFFFF; border-bottom:1px solid #D8D5D3;"></div>
+        <div class="swatch-info">
+          <div class="swatch-name">White</div>
+          <div class="swatch-hex">#FFFFFF</div>
+          <div class="swatch-role">Card surfaces · nav</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── TYPOGRAPHY ─────────────────────────────────────────────────── -->
+  <section class="type-section">
+    <div class="section-label">Typography — Outfit (display) · Inter (body) · Monospace (lap times)</div>
+
+    <div class="type-row">
+      <div class="type-meta">Display / Hero<br/>Outfit 800<br/>64px / -0.02em<br/>Uppercase</div>
+      <div class="type-specimen-d1">Apex Lab</div>
+    </div>
+    <div class="type-row">
+      <div class="type-meta">Display / Hero<br/>Outfit 800<br/>64px<br/>Red accent</div>
+      <div class="type-specimen-d1 type-red">14.82</div>
+    </div>
+    <div class="type-row">
+      <div class="type-meta">Section heading<br/>Outfit 800<br/>40px / Uppercase</div>
+      <div class="type-specimen-d2">Figure Eight</div>
+    </div>
+    <div class="type-row">
+      <div class="type-meta">Card title<br/>Outfit 700<br/>28px</div>
+      <div class="type-specimen-h1">Best lap this session</div>
+    </div>
+    <div class="type-row">
+      <div class="type-meta">Sub-heading<br/>Outfit 700<br/>20px</div>
+      <div class="type-specimen-h2">Pitbike 160 · 9m circles</div>
+    </div>
+    <div class="type-row">
+      <div class="type-meta">UI label<br/>Outfit 700<br/>11px / 0.15em<br/>Uppercase</div>
+      <div class="type-specimen-label">Press Releases · Best Lap · Setup Variant</div>
+    </div>
+    <div class="type-row">
+      <div class="type-meta">Body copy<br/>Inter 400<br/>15px / 1.6lh</div>
+      <div class="type-specimen-body">Apex Lab is a track-side training platform for MotoGP-style riders. Log every drill, time every lap, and track your improvement across sessions with the same bike and layout.</div>
+    </div>
+    <div class="type-row">
+      <div class="type-meta">Lap time<br/>Monospace 700<br/>32px<br/>Tabular lining</div>
+      <div class="type-specimen-mono">14.82 <span style="color:var(--red);font-size:18px;">PB</span></div>
+    </div>
+  </section>
+
+  <!-- ── COMPONENTS ─────────────────────────────────────────────────── -->
+  <section class="components-section">
+    <div class="section-label">Components</div>
+
+    <!-- Row 1: session cards -->
+    <div class="cards-row">
+
+      <!-- Light session card -->
+      <div class="card">
+        <div class="card-tag">Session · Jun 8 2026 <span class="card-arrow">↗</span></div>
+        <div class="card-title">Figure Eight</div>
+        <div class="card-sub">Pitbike 160 · 9m circles · 3 laps</div>
+        <div class="card-stat-row">
+          <div class="stat">
+            <div class="stat-value best">14.82</div>
+            <div class="stat-label">Best lap</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">15.18</div>
+            <div class="stat-label">Average</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">0.80</div>
+            <div class="stat-label">Spread</div>
+          </div>
+        </div>
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-label"><span>Consistency</span><span>78%</span></div>
+          <div class="progress-track"><div class="progress-fill" style="width:78%;"></div></div>
+        </div>
+      </div>
+
+      <!-- Dark session card -->
+      <div class="card card-dark">
+        <div class="card-tag">Personal Best <span class="card-arrow">↗</span></div>
+        <div class="card-title">Hairpin</div>
+        <div class="card-sub">Pitbike 160 · Standard · 6 laps</div>
+        <div class="card-stat-row">
+          <div class="stat">
+            <div class="stat-value best">9.41</div>
+            <div class="stat-label">Best lap</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">9.87</div>
+            <div class="stat-label">Average</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">0.46</div>
+            <div class="stat-label">Spread</div>
+          </div>
+        </div>
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-label"><span>Consistency</span><span>91%</span></div>
+          <div class="progress-track"><div class="progress-fill" style="width:91%;"></div></div>
+        </div>
+      </div>
+
+      <!-- Drill card -->
+      <div class="card card-drill">
+        <div class="card-tag">Drill Library <span class="card-arrow" style="color:var(--charcoal);">↗</span></div>
+        <div class="drill-badge">● Body Transition</div>
+        <div class="card-title">Figure Eight</div>
+        <div class="card-sub">Trains body positioning through crossover. Set 9 cones at 4.5m radius.</div>
+        <div class="card-stat-row">
+          <div class="stat">
+            <div class="stat-value">9m</div>
+            <div class="stat-label">Circle dia.</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">9</div>
+            <div class="stat-label">Cones</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value">3</div>
+            <div class="stat-label">Variants</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Lap time list -->
+    <div class="cards-row">
+      <div class="card" style="grid-column: span 1;">
+        <div class="card-tag">Lap Times <span class="card-arrow">↗</span></div>
+        <div class="card-title" style="font-size:16px; margin-bottom:16px;">Figure Eight · Jun 8</div>
+        <div class="lap-list">
+          <div class="lap-row pb">
+            <div class="lap-num">L1</div>
+            <div class="lap-time">15.62</div>
+            <div class="lap-delta slow">—</div>
+          </div>
+          <div class="lap-row">
+            <div class="lap-num">L2</div>
+            <div class="lap-time">15.10</div>
+            <div class="lap-delta fast">−0.52</div>
+          </div>
+          <div class="lap-row">
+            <div class="lap-num">L3</div>
+            <div class="lap-time" style="color:var(--red); font-weight:800;">14.82</div>
+            <div class="lap-delta fast">−0.28 PB</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bike profile card -->
+      <div class="card" style="grid-column: span 1;">
+        <div class="card-tag">Bike Profile</div>
+        <div class="card-title">Pitbike 160</div>
+        <div class="card-sub" style="margin-bottom:24px;">Pitbike · 160cc · Parking-lot training bike</div>
+        <div class="card-stat-row" style="flex-wrap:wrap; gap:16px;">
+          <div class="stat">
+            <div class="stat-value" style="font-size:16px;">12</div>
+            <div class="stat-label">Sessions</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" style="font-size:16px;">84</div>
+            <div class="stat-label">Total laps</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value" style="font-size:16px; color:var(--red);">Active</div>
+            <div class="stat-label">Status</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Conditions card -->
+      <div class="card" style="grid-column: span 1; border-left: 3px solid var(--silver-mid);">
+        <div class="card-tag">Session Notes</div>
+        <div class="card-title" style="font-size:16px; margin-bottom:16px;">Conditions & Focus</div>
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <div>
+            <div class="stat-label" style="margin-bottom:4px;">Surface</div>
+            <div style="font-size:13px; color:var(--charcoal);">Smooth tarmac, slight dust near apex</div>
+          </div>
+          <div>
+            <div class="stat-label" style="margin-bottom:4px;">Focus</div>
+            <div style="font-size:13px; color:var(--charcoal);">Look through crossover earlier</div>
+          </div>
+          <div>
+            <div class="stat-label" style="margin-bottom:4px;">What felt good</div>
+            <div style="font-size:13px; color:var(--charcoal);">Body transition improved on lap 3</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── BUTTONS ────────────────────────────────────────────────────── -->
+  <section class="buttons-section">
+    <div class="section-label">Buttons & Controls</div>
+    <div class="btn-row">
+      <button class="btn btn-red">Start Session</button>
+      <button class="btn btn-dark">View All Drills</button>
+      <button class="btn btn-outline">Cancel</button>
+      <button class="btn btn-outline-red">Set PB Target</button>
+      <button class="btn btn-silver">Filter</button>
+      <button class="btn btn-icon btn-red">▶</button>
+      <button class="btn btn-icon btn-dark">+</button>
+      <button class="btn btn-icon btn-outline">←</button>
+    </div>
+  </section>
+
+  <!-- ── STATEMENT SECTION ──────────────────────────────────────────── -->
+  <section class="statement-section">
+    <p class="statement-text">
+      Built for riders who train like they race.<br/>
+      <span class="fade">Every lap logged. Every second counted.</span><br/>
+      <span class="accent">Your personal best is waiting.</span>
+    </p>
+  </section>
+
+  <!-- ── STAT BAND ──────────────────────────────────────────────────── -->
+  <div class="stat-band">
+    <div class="stat-cell">
+      <div class="stat-cell-value">14<span>.82</span></div>
+      <div class="stat-cell-label">Personal Best · Figure Eight</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-cell-value">84</div>
+      <div class="stat-cell-label">Total Laps Logged</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-cell-value">12</div>
+      <div class="stat-cell-label">Sessions This Month</div>
+    </div>
+    <div class="stat-cell">
+      <div class="stat-cell-value">−<span>2.1</span>s</div>
+      <div class="stat-cell-label">Improvement · Last 30 Days</div>
+    </div>
+  </div>
+
+  <!-- ── DARK BAND ──────────────────────────────────────────────────── -->
+  <div class="dark-band">
+    <div class="dark-band-headline">Train smarter.<br/>Go faster.</div>
+    <div class="dark-band-body">
+      Apex Lab breaks your on-track time into measurable drills — figure eights, hairpins, L-turns. Each session is timed against the same bike and layout, so your progress numbers actually mean something. No guesswork, just laps.
+    </div>
+  </div>
+
+</body>
+</html>

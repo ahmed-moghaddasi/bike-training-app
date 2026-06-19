@@ -1,17 +1,28 @@
 {
   "expo": {
-    "name": "bike-training-app",
+    "name": "Bike Training",
     "slug": "bike-training-app",
+    "description": "A mobile-first motorcycle drill tracker for cone setups, session timing, and practice progress.",
     "version": "1.0.0",
+    "scheme": "biketraining",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#101214",
+    "primaryColor": "#F2A23A",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.biketraining.app"
     },
     "android": {
+      "package": "com.biketraining.app",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#101214",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -19,7 +30,19 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/favicon.png",
+      "name": "Bike Training",
+      "shortName": "Bike Drills",
+      "lang": "en",
+      "scope": "/",
+      "themeColor": "#101214",
+      "backgroundColor": "#101214",
+      "display": "standalone",
+      "startUrl": ".",
+      "orientation": "portrait",
+      "description": "Plan cone drills, time sessions, and track riding progress from phone or browser."
     }
   }
 }
