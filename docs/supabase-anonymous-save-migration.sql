@@ -9,6 +9,10 @@ alter table public.sessions
 
 create index if not exists sessions_client_date_idx on public.sessions(client_id, date desc);
 
+grant select, insert on public.sessions to anon, authenticated;
+grant select, insert on public.laps to anon, authenticated;
+grant select, insert on public.detection_events to anon, authenticated;
+
 drop policy if exists "Users can read own sessions" on public.sessions;
 create policy "Users can read own sessions"
 on public.sessions for select
@@ -86,6 +90,25 @@ create policy "Users can read own session videos"
 on storage.objects for select
 to authenticated, anon
 using (
+  bucket_id = 'session-videos'
+  and (
+    split_part(name, '/', 1) = auth.uid()::text
+    or split_part(name, '/', 1) = 'anonymous'
+  )
+);
+
+drop policy if exists "Users can update own session videos" on storage.objects;
+create policy "Users can update own session videos"
+on storage.objects for update
+to authenticated, anon
+using (
+  bucket_id = 'session-videos'
+  and (
+    split_part(name, '/', 1) = auth.uid()::text
+    or split_part(name, '/', 1) = 'anonymous'
+  )
+)
+with check (
   bucket_id = 'session-videos'
   and (
     split_part(name, '/', 1) = auth.uid()::text

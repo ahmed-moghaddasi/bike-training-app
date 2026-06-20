@@ -25,7 +25,7 @@ import {
   latestSession,
   sessionsForContext,
 } from './src/lib/metrics';
-import { isSupabaseConfigured, saveSessionDraft } from './src/lib/supabase';
+import { isSupabaseConfigured, loadSavedSessions, saveSessionDraft } from './src/lib/supabase';
 import { colors, fonts, radius, spacing } from './src/theme';
 import type { Bike, DetectionEvent, Drill, Lap, ProgressContext, Session, SessionDraft, SetupVariant } from './src/types';
 
@@ -703,19 +703,48 @@ function SessionSummaryScreen({
 }
 
 function SessionsScreen({ go }: { go: (route: Route) => void }) {
+  const [cloudSessions, setCloudSessions] = useState<Session[] | null>(null);
+  const [cloudError, setCloudError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    if (!isSupabaseConfigured) {
+      setCloudSessions([]);
+      return () => {
+        active = false;
+      };
+    }
+    void loadSavedSessions()
+      .then((saved) => {
+        if (active) setCloudSessions(saved);
+      })
+      .catch((error) => {
+        if (active) {
+          setCloudSessions([]);
+          setCloudError(error instanceof Error ? error.message : 'Could not load saved sessions.');
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const visibleSessions = cloudSessions?.length ? cloudSessions : sessions;
   const groups = useMemo(() => {
     const byDate: Record<string, Session[]> = {};
-    for (const session of sessions) {
+    for (const session of visibleSessions) {
       const key = new Date(session.date).toISOString().slice(0, 10);
       byDate[key] = [...(byDate[key] ?? []), session];
     }
     return Object.entries(byDate)
       .sort(([a], [b]) => new Date(b).getTime() - new Date(a).getTime())
       .map(([date, group]) => ({ date, sessions: group.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) }));
-  }, []);
+  }, [visibleSessions]);
 
   return (
     <Page title="Sessions" subtitle="Review your practice history.">
+      {cloudSessions === null && <Text style={styles.dateSummary}>Loading saved sessions...</Text>}
+      {cloudError && <Text style={[styles.saveMessage, styles.saveMessageError]}>{cloudError}</Text>}
       <View style={styles.filterRow}>
         <Text style={styles.filterChip}>All Bikes</Text>
         <Text style={styles.filterChip}>All Drills</Text>

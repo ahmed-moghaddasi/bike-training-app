@@ -22,6 +22,21 @@ export type SavedSession = {
   laps: Lap[];
 };
 
+type SavedSessionRow = {
+  id: string;
+  date: string;
+  bike_id: string;
+  drill_id: string;
+  setup_variant_id: string;
+  video_saved: boolean;
+  notes: string | null;
+  laps: Array<{
+    lap_number: number;
+    time: number;
+    timestamp_in_video: number | null;
+  }>;
+};
+
 function getVideoExtension(videoUri: string) {
   if (videoUri.includes('webm')) return 'webm';
   return 'mp4';
@@ -61,7 +76,7 @@ export async function saveSessionDraft(draft: SessionDraft, notes: string) {
     videoPath = `anonymous/${clientId}/${draft.startedAt.replace(/[:.]/g, '-')}-${draft.drillId}.${extension}`;
     const { error: uploadError } = await supabase.storage.from('session-videos').upload(videoPath, blob, {
       contentType: blob.type || `video/${extension}`,
-      upsert: false,
+      upsert: true,
     });
     if (uploadError) throw uploadError;
   }
@@ -119,4 +134,34 @@ export async function saveSessionDraft(draft: SessionDraft, notes: string) {
   }
 
   return session.id as string;
+}
+
+export async function loadSavedSessions(): Promise<SavedSession[]> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const clientId = getClientId();
+  const { data, error } = await supabase
+    .from('sessions')
+    .select('id,date,bike_id,drill_id,setup_variant_id,video_path,video_saved,notes,laps(lap_number,time,timestamp_in_video)')
+    .eq('client_id', clientId)
+    .order('date', { ascending: false });
+
+  if (error) throw error;
+
+  return ((data ?? []) as SavedSessionRow[]).map((session) => ({
+    id: session.id,
+    date: session.date,
+    bikeId: session.bike_id,
+    drillId: session.drill_id,
+    setupVariantId: session.setup_variant_id,
+    videoSaved: session.video_saved,
+    notes: session.notes ?? undefined,
+    laps: session.laps
+      .slice()
+      .sort((a, b) => a.lap_number - b.lap_number)
+      .map((lap) => ({
+        lapNumber: lap.lap_number,
+        time: Number(lap.time),
+        timestampInVideo: lap.timestamp_in_video === null ? undefined : Number(lap.timestamp_in_video),
+      })),
+  }));
 }

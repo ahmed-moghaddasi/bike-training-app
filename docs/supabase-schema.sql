@@ -47,6 +47,10 @@ create index if not exists sessions_client_date_idx on public.sessions(client_id
 create index if not exists laps_session_idx on public.laps(session_id, lap_number);
 create index if not exists detection_events_session_idx on public.detection_events(session_id, detected_at);
 
+grant select, insert on public.sessions to anon, authenticated;
+grant select, insert on public.laps to anon, authenticated;
+grant select, insert on public.detection_events to anon, authenticated;
+
 alter table public.sessions enable row level security;
 alter table public.laps enable row level security;
 alter table public.detection_events enable row level security;
@@ -145,6 +149,25 @@ create policy "Users can read own session videos"
 on storage.objects for select
 to authenticated, anon
 using (
+  bucket_id = 'session-videos'
+  and (
+    split_part(name, '/', 1) = auth.uid()::text
+    or split_part(name, '/', 1) = 'anonymous'
+  )
+);
+
+drop policy if exists "Users can update own session videos" on storage.objects;
+create policy "Users can update own session videos"
+on storage.objects for update
+to authenticated, anon
+using (
+  bucket_id = 'session-videos'
+  and (
+    split_part(name, '/', 1) = auth.uid()::text
+    or split_part(name, '/', 1) = 'anonymous'
+  )
+)
+with check (
   bucket_id = 'session-videos'
   and (
     split_part(name, '/', 1) = auth.uid()::text
