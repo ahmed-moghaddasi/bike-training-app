@@ -36,7 +36,7 @@ type Route =
   | { name: 'camera'; drillId: string }
   | { name: 'summary'; drillId: string; draft?: SessionDraft }
   | { name: 'sessions' }
-  | { name: 'session'; sessionId: string }
+  | { name: 'session'; sessionId: string; session?: Session }
   | { name: 'progress' }
   | { name: 'drillProgress'; context: ProgressContext };
 
@@ -120,7 +120,7 @@ export default function App() {
       {route.name === 'camera' && <CameraScreen drillId={route.drillId} currentBike={currentBike} go={go} />}
       {route.name === 'summary' && <SessionSummaryScreen drillId={route.drillId} currentBike={currentBike} draft={route.draft} go={go} />}
       {route.name === 'sessions' && <SessionsScreen go={go} />}
-      {route.name === 'session' && <SessionDetailScreen sessionId={route.sessionId} go={go} />}
+      {route.name === 'session' && <SessionDetailScreen sessionId={route.sessionId} cloudSession={route.session} go={go} />}
       {route.name === 'progress' && (
         <ProgressScreen currentBikeId={currentBikeId} setCurrentBikeId={setCurrentBikeId} go={go} />
       )}
@@ -755,7 +755,7 @@ function SessionsScreen({ go }: { go: (route: Route) => void }) {
           <Section key={group.date} label={formatDate(group.date)}>
             <Text style={styles.dateSummary}>{group.sessions.length} session{group.sessions.length === 1 ? '' : 's'} · {lapCount} laps</Text>
             {group.sessions.map((session) => (
-              <SessionCard key={session.id} session={session} onPress={() => go({ name: 'session', sessionId: session.id })} />
+              <SessionCard key={session.id} session={session} onPress={() => go({ name: 'session', sessionId: session.id, session })} />
             ))}
           </Section>
         );
@@ -764,8 +764,8 @@ function SessionsScreen({ go }: { go: (route: Route) => void }) {
   );
 }
 
-function SessionDetailScreen({ sessionId, go }: { sessionId: string; go: (route: Route) => void }) {
-  const session = sessions.find((item) => item.id === sessionId) ?? sessions[0];
+function SessionDetailScreen({ sessionId, cloudSession, go }: { sessionId: string; cloudSession?: Session; go: (route: Route) => void }) {
+  const session = cloudSession ?? sessions.find((item) => item.id === sessionId) ?? sessions[0];
   const drill = drills.find((item) => item.id === session.drillId) ?? drills[0];
   const bike = bikes.find((item) => item.id === session.bikeId) ?? bikes[0];
   const setup = getSetupName(drill, session.setupVariantId);
@@ -783,10 +783,26 @@ function SessionDetailScreen({ sessionId, go }: { sessionId: string; go: (route:
         ]}
       />
       <Section label="Video">
-        <View style={styles.videoPlaceholder}>
-          <Text style={styles.placeholderTitle}>{session.videoSaved ? 'Video saved' : 'Video unavailable'}</Text>
-          <Text style={styles.placeholderText}>Playback component lands with the real camera phase.</Text>
-        </View>
+        {session.videoUri && Platform.OS === 'web' ? (
+          React.createElement('video', {
+            src: session.videoUri,
+            controls: true,
+            playsInline: true,
+            preload: 'metadata',
+            style: {
+              backgroundColor: colors.black,
+              borderRadius: radius.md,
+              display: 'block',
+              maxHeight: 520,
+              width: '100%',
+            },
+          })
+        ) : (
+          <View style={styles.videoPlaceholder}>
+            <Text style={styles.placeholderTitle}>{session.videoSaved ? 'Video unavailable' : 'No video saved'}</Text>
+            <Text style={styles.placeholderText}>{session.videoSaved ? 'Refresh the Session Log to request a new playback link.' : 'This session does not include a recording.'}</Text>
+          </View>
+        )}
       </Section>
       <Section label="Lap Times">
         <LapList laps={session.laps} />

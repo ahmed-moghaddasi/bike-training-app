@@ -18,6 +18,7 @@ export type SavedSession = {
   setupVariantId: string;
   videoPath?: string;
   videoSaved: boolean;
+  videoUri?: string;
   notes?: string;
   laps: Lap[];
 };
@@ -28,6 +29,7 @@ type SavedSessionRow = {
   bike_id: string;
   drill_id: string;
   setup_variant_id: string;
+  video_path: string | null;
   video_saved: boolean;
   notes: string | null;
   laps: Array<{
@@ -147,21 +149,35 @@ export async function loadSavedSessions(): Promise<SavedSession[]> {
 
   if (error) throw error;
 
-  return ((data ?? []) as SavedSessionRow[]).map((session) => ({
-    id: session.id,
-    date: session.date,
-    bikeId: session.bike_id,
-    drillId: session.drill_id,
-    setupVariantId: session.setup_variant_id,
-    videoSaved: session.video_saved,
-    notes: session.notes ?? undefined,
-    laps: session.laps
-      .slice()
-      .sort((a, b) => a.lap_number - b.lap_number)
-      .map((lap) => ({
-        lapNumber: lap.lap_number,
-        time: Number(lap.time),
-        timestampInVideo: lap.timestamp_in_video === null ? undefined : Number(lap.timestamp_in_video),
-      })),
-  }));
+  return Promise.all(
+    ((data ?? []) as SavedSessionRow[]).map(async (session) => {
+      let videoUri: string | undefined;
+      if (session.video_path) {
+        const { data: signedVideo, error: signedVideoError } = await supabase.storage
+          .from('session-videos')
+          .createSignedUrl(session.video_path, 60 * 60);
+        if (!signedVideoError) videoUri = signedVideo.signedUrl;
+      }
+
+      return {
+        id: session.id,
+        date: session.date,
+        bikeId: session.bike_id,
+        drillId: session.drill_id,
+        setupVariantId: session.setup_variant_id,
+        videoPath: session.video_path ?? undefined,
+        videoSaved: session.video_saved,
+        videoUri,
+        notes: session.notes ?? undefined,
+        laps: session.laps
+          .slice()
+          .sort((a, b) => a.lap_number - b.lap_number)
+          .map((lap) => ({
+            lapNumber: lap.lap_number,
+            time: Number(lap.time),
+            timestampInVideo: lap.timestamp_in_video === null ? undefined : Number(lap.timestamp_in_video),
+          })),
+      };
+    })
+  );
 }
