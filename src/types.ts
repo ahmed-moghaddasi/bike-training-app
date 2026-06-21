@@ -97,6 +97,7 @@ export type Session = {
   setupVariantId: string;
   laps: Lap[];
   videoSaved: boolean;
+  videoPath?: string;
   videoUri?: string;
   notes?: string;
   conditions?: string;

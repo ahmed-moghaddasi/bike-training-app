@@ -1,4 +1,4 @@
-import { useRef, useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import {
   Animated,
   Pressable,
@@ -18,7 +18,7 @@ import {
   sessionsForContext,
 } from '../lib/metrics';
 import { colors, fonts, radius, spacing } from '../theme';
-import type { Bike, Drill, Session } from '../types';
+import type { Drill, Session } from '../types';
 
 // ─── Nav card stack constants ────────────────────────────────────────────────
 
@@ -37,9 +37,7 @@ const STACK_SCROLL_END   = 400;
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface HomeScreenV2Props {
-  currentBike: Bike;
   currentBikeId: string;
-  setCurrentBikeId: (id: string) => void;
   onOpenDrills: () => void;
   onOpenDrill: (drillId: string) => void;
   onOpenSession: (sessionId: string) => void;
@@ -48,9 +46,7 @@ interface HomeScreenV2Props {
 }
 
 export function HomeScreenV2({
-  currentBike,
   currentBikeId,
-  setCurrentBikeId,
   onOpenDrills,
   onOpenDrill,
   onOpenSession,
@@ -58,19 +54,6 @@ export function HomeScreenV2({
   onOpenProgress,
 }: HomeScreenV2Props) {
   const scrollY = useMemo(() => new Animated.Value(0), []);
-
-  // Bike dropdown state — kept here so the floating dropdown (rendered outside
-  // the ScrollView) can be controlled from the pill inside it.
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [dropdownTop, setDropdownTop]   = useState(80);
-  const pillRef = useRef<View>(null);
-
-  const openDropdown = () => {
-    pillRef.current?.measureInWindow((_x, y, _w, h) => {
-      setDropdownTop(y + h + 4);
-    });
-    setDropdownOpen(true);
-  };
 
   // ── Derived data ──────────────────────────────────────────────────────────
 
@@ -117,8 +100,6 @@ export function HomeScreenV2({
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
-    // Wrapper View is required so the floating dropdown can be absolutely
-    // positioned OUTSIDE the ScrollView (escaping its stacking context).
     <View style={styles.wrapper}>
       <Animated.ScrollView
         contentContainerStyle={styles.page}
@@ -135,21 +116,6 @@ export function HomeScreenV2({
             <Text style={styles.brandMark}>
               Apex<Text style={styles.brandAccent}>Lab</Text>
             </Text>
-
-            {/* Pill trigger — measures its own position for the floating dropdown */}
-            <Pressable
-              ref={pillRef}
-              style={[styles.bikePill, dropdownOpen && styles.bikePillActive]}
-              onPress={openDropdown}
-              hitSlop={10}
-            >
-              <Text style={styles.bikePillText} numberOfLines={1}>
-                {currentBike.name}
-              </Text>
-              <Text style={styles.bikePillChevron}>
-                {dropdownOpen ? '▲' : '▼'}
-              </Text>
-            </Pressable>
           </View>
 
           <Text style={styles.tagline}>Parking-lot drills for track pace.</Text>
@@ -230,45 +196,6 @@ export function HomeScreenV2({
         </View>
       </Animated.ScrollView>
 
-      {/* ── Floating bike dropdown (outside the ScrollView) ──────── */}
-      {dropdownOpen && (
-        <>
-          {/* Invisible full-screen backdrop — tap to dismiss */}
-          <Pressable
-            style={[StyleSheet.absoluteFill, styles.backdrop]}
-            onPress={() => setDropdownOpen(false)}
-          />
-
-          {/* The actual menu, positioned below the pill */}
-          <View style={[styles.floatingDropdown, { top: dropdownTop }]}>
-            {bikes.map((bike) => {
-              const active = bike.id === currentBikeId;
-              return (
-                <Pressable
-                  key={bike.id}
-                  style={[styles.dropdownRow, active && styles.dropdownRowActive]}
-                  onPress={() => {
-                    setCurrentBikeId(bike.id);
-                    setDropdownOpen(false);
-                  }}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.dropdownName, active && styles.dropdownNameActive]}>
-                      {bike.name}
-                    </Text>
-                    {bike.engineSize && (
-                      <Text style={[styles.dropdownMeta, active && styles.dropdownMetaActive]}>
-                        {bike.engineSize}
-                      </Text>
-                    )}
-                  </View>
-                  {active && <View style={styles.activeDot} />}
-                </Pressable>
-              );
-            })}
-          </View>
-        </>
-      )}
     </View>
   );
 }
@@ -456,93 +383,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     letterSpacing: 0.3,
     lineHeight: 20,
-  },
-
-  // ── Bike pill (trigger only, no dropdown here) ───────────────────
-  bikePill: {
-    alignItems: 'center',
-    borderColor: 'rgba(255,255,255,0.2)',
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 7,
-    marginTop: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
-  bikePillActive: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderColor: 'rgba(255,255,255,0.5)',
-  },
-  bikePillText: {
-    color: colors.white,
-    fontFamily: fonts.display,
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.4,
-    maxWidth: 130,
-  },
-  bikePillChevron: {
-    color: colors.red,
-    fontSize: 9,
-    fontWeight: '800',
-  },
-
-  // ── Floating dropdown (rendered outside ScrollView) ──────────────
-  backdrop: {
-    zIndex: 998,
-  },
-  floatingDropdown: {
-    backgroundColor: colors.white,
-    borderColor: colors.silverMid,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    minWidth: 190,
-    overflow: 'hidden',
-    position: 'absolute',
-    right: spacing.pageX,
-    zIndex: 999,
-    elevation: 999,
-    shadowColor: colors.black,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-  },
-  dropdownRow: {
-    alignItems: 'center',
-    borderBottomColor: colors.silverMid,
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-  },
-  dropdownRowActive: {
-    backgroundColor: colors.charcoal,
-  },
-  dropdownName: {
-    color: colors.charcoal,
-    fontFamily: fonts.display,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  dropdownNameActive: {
-    color: colors.white,
-  },
-  dropdownMeta: {
-    color: SILVER_DARK_MB,
-    fontFamily: fonts.body,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  dropdownMetaActive: {
-    color: colors.silverMid,
-  },
-  activeDot: {
-    backgroundColor: colors.red,
-    borderRadius: 4,
-    height: 8,
-    width: 8,
   },
 
   // ── Library button ────────────────────────────────────────────────

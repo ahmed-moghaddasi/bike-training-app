@@ -9,7 +9,7 @@ alter table public.sessions
 
 create index if not exists sessions_client_date_idx on public.sessions(client_id, date desc);
 
-grant select, insert, update on public.sessions to anon, authenticated;
+grant select, insert, update, delete on public.sessions to anon, authenticated;
 grant select, insert on public.laps to anon, authenticated;
 grant select, insert on public.detection_events to anon, authenticated;
 
@@ -34,6 +34,15 @@ using (
   or (user_id is null and client_id is not null)
 )
 with check (
+  auth.uid() = user_id
+  or (user_id is null and client_id is not null)
+);
+
+drop policy if exists "Users can delete own sessions" on public.sessions;
+create policy "Users can delete own sessions"
+on public.sessions for delete
+to authenticated, anon
+using (
   auth.uid() = user_id
   or (user_id is null and client_id is not null)
 );
@@ -122,6 +131,18 @@ using (
   )
 )
 with check (
+  bucket_id = 'session-videos'
+  and (
+    split_part(name, '/', 1) = auth.uid()::text
+    or split_part(name, '/', 1) = 'anonymous'
+  )
+);
+
+drop policy if exists "Users can delete own session videos" on storage.objects;
+create policy "Users can delete own session videos"
+on storage.objects for delete
+to authenticated, anon
+using (
   bucket_id = 'session-videos'
   and (
     split_part(name, '/', 1) = auth.uid()::text

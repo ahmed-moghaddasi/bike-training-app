@@ -224,3 +224,21 @@ export async function loadSavedSessions(): Promise<SavedSession[]> {
     })
   );
 }
+
+export async function deleteSavedSession(sessionId: string, videoPath?: string) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const clientId = getClientId();
+
+  if (videoPath) {
+    const { error: videoError } = await supabase.storage.from('session-videos').remove([videoPath]);
+    if (videoError) throw videoError;
+  }
+
+  const { error } = await supabase
+    .from('sessions')
+    .delete()
+    .eq('id', sessionId)
+    .eq('client_id', clientId);
+
+  if (error) throw error;
+}

@@ -34,7 +34,7 @@ import {
   MAX_RECORDING_DURATION_MS,
   validateRecordingBlob,
 } from './src/lib/recording';
-import { isSupabaseConfigured, loadSavedSessions, saveSessionDraft } from './src/lib/supabase';
+import { deleteSavedSession, isSupabaseConfigured, loadSavedSessions, saveSessionDraft } from './src/lib/supabase';
 import { colors, fonts, radius, spacing } from './src/theme';
 import type { Bike, DetectionEvent, Drill, Lap, ProgressContext, Session, SessionDraft, SetupVariant } from './src/types';
 
@@ -97,9 +97,7 @@ export default function App() {
 
       {route.name === 'home' && (
         <HomeScreenV2
-          currentBike={currentBike}
           currentBikeId={currentBikeId}
-          setCurrentBikeId={setCurrentBikeId}
           onOpenDrills={() => go({ name: 'drills' })}
           onOpenDrill={(id) => go({ name: 'drill', drillId: id })}
           onOpenSession={(id) => go({ name: 'session', sessionId: id })}
@@ -774,7 +772,7 @@ function SessionsScreen({ go }: { go: (route: Route) => void }) {
     };
   }, []);
 
-  const visibleSessions = cloudSessions?.length ? cloudSessions : sessions;
+  const visibleSessions = isSupabaseConfigured ? cloudSessions ?? [] : sessions;
   const groups = useMemo(() => {
     const byDate: Record<string, Session[]> = {};
     for (const session of visibleSessions) {
@@ -790,10 +788,7 @@ function SessionsScreen({ go }: { go: (route: Route) => void }) {
     <Page title="Sessions" subtitle="Review your practice history.">
       {cloudSessions === null && <Text style={styles.dateSummary}>Loading saved sessions...</Text>}
       {cloudError && <Text style={[styles.saveMessage, styles.saveMessageError]}>{cloudError}</Text>}
-      <View style={styles.filterRow}>
-        <Text style={styles.filterChip}>All Bikes</Text>
-        <Text style={styles.filterChip}>All Drills</Text>
-      </View>
+      {cloudSessions !== null && groups.length === 0 && <EmptyState title="No sessions yet" body="Record and save a drill session to start your training log." />}
       {groups.map((group) => {
         const lapCount = group.sessions.reduce((sum, session) => sum + session.laps.length, 0);
         return (
@@ -816,6 +811,21 @@ function SessionDetailScreen({ sessionId, cloudSession, go }: { sessionId: strin
   const setup = getSetupName(drill, session.setupVariantId);
   const best = bestLap(session);
   const avg = averageLap(session);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteState, setDeleteState] = useState<'idle' | 'deleting' | 'error'>('idle');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  async function deleteSession() {
+    try {
+      setDeleteState('deleting');
+      setDeleteError(null);
+      await deleteSavedSession(session.id, session.videoPath);
+      go({ name: 'sessions' });
+    } catch (error) {
+      setDeleteState('error');
+      setDeleteError(error instanceof Error ? error.message : 'Could not delete the session.');
+    }
+  }
 
   return (
     <Page title={drill.name} subtitle={`${setup} · ${bike.name} · ${formatDate(session.date)}`}>
@@ -863,6 +873,26 @@ function SessionDetailScreen({ sessionId, cloudSession, go }: { sessionId: strin
           onPress={() => go({ name: 'drillProgress', context: { bikeId: bike.id, drillId: drill.id, setupVariantId: session.setupVariantId } })}
         />
       </View>
+      {cloudSession && !confirmDelete && (
+        <Pressable style={styles.sessionDeleteButton} onPress={() => setConfirmDelete(true)}>
+          <Text style={styles.sessionDeleteText}>Delete Session</Text>
+        </Pressable>
+      )}
+      {cloudSession && confirmDelete && (
+        <View style={styles.deleteConfirm}>
+          <Text style={styles.deleteConfirmTitle}>Delete this session?</Text>
+          <Text style={styles.cardSub}>Its lap data, detection events, notes, and video will be permanently removed.</Text>
+          {deleteError && <Text style={[styles.saveMessage, styles.saveMessageError]}>{deleteError}</Text>}
+          <View style={styles.deleteActions}>
+            <Pressable style={styles.deleteCancelButton} onPress={() => setConfirmDelete(false)}>
+              <Text style={styles.secondaryButtonText}>Cancel</Text>
+            </Pressable>
+            <Pressable style={styles.deleteConfirmButton} onPress={() => void deleteSession()}>
+              <Text style={styles.primaryButtonText}>{deleteState === 'deleting' ? 'Deleting...' : 'Delete Permanently'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
     </Page>
   );
 }
@@ -1634,6 +1664,57 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
+  },
+  sessionDeleteButton: {
+    alignItems: 'center',
+    marginTop: 18,
+    padding: 16,
+  },
+  sessionDeleteText: {
+    color: colors.red,
+    fontFamily: fonts.display,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  deleteConfirm: {
+    borderColor: colors.red,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: 10,
+    marginTop: 18,
+    padding: 16,
+  },
+  deleteConfirmTitle: {
+    color: colors.charcoal,
+    fontFamily: fonts.display,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  deleteActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  deleteCancelButton: {
+    alignItems: 'center',
+    borderColor: colors.charcoal,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 50,
+    paddingHorizontal: 12,
+  },
+  deleteConfirmButton: {
+    alignItems: 'center',
+    backgroundColor: colors.red,
+    borderRadius: radius.pill,
+    flex: 1.4,
+    justifyContent: 'center',
+    minHeight: 50,
+    paddingHorizontal: 12,
   },
   lapList: {
     gap: 8,
