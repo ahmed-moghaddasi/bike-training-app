@@ -31,6 +31,7 @@ export type TimingRule = {
   startRule: string;
   lapRule: string;
   comparisonContext: string;
+  detectionsPerLap?: number;
 };
 
 export type Progression = {

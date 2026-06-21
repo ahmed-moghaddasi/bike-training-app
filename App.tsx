@@ -183,7 +183,7 @@ function DrillDetailScreen({ drillId, go }: { drillId: string; go: (route: Route
 
       <Section label="Camera Placement">
         <Text style={styles.bodyText}>{drill.cameraPlacement.positionDescription}</Text>
-        <BulletList items={[...drill.cameraPlacement.whatCameraShouldSee, `Timing: ${drill.cameraPlacement.timingPoint}`]} />
+        <BulletList items={[...drill.cameraPlacement.whatCameraShouldSee, `Timing: ${drill.cameraPlacement.timingPoint}`, `Lap rule: ${drill.timingRule.lapRule}`]} />
       </Section>
 
       <Section label="How To Ride It">
@@ -257,6 +257,7 @@ function WebCameraTimer({
   const detectorRef = useRef<MotionDetector>(createMotionDetector());
   const timerStartAtRef = useRef<number | null>(null);
   const lastLapAtRef = useRef<number | null>(null);
+  const passesSinceLapRef = useRef(0);
   const recordingStartedAtRef = useRef<string>(new Date().toISOString());
   const recordingStopReasonRef = useRef<'user' | 'maxDuration'>('user');
   const detectionEventsRef = useRef<DetectionEvent[]>([]);
@@ -369,6 +370,7 @@ function WebCameraTimer({
     if (timerStartAtRef.current === null) {
       timerStartAtRef.current = now;
       lastLapAtRef.current = now;
+      passesSinceLapRef.current = 0;
       const event: DetectionEvent = {
         eventType: 'sessionStart',
         detectedAt: new Date().toISOString(),
@@ -380,6 +382,14 @@ function WebCameraTimer({
       flashDetection('Timer Started');
       return;
     }
+
+    const detectionsPerLap = Math.max(1, drill.timingRule.detectionsPerLap ?? 1);
+    passesSinceLapRef.current += 1;
+    if (passesSinceLapRef.current < detectionsPerLap) {
+      flashDetection(detectionsPerLap === 2 ? 'Half Lap' : `Pass ${passesSinceLapRef.current} of ${detectionsPerLap}`);
+      return;
+    }
+    passesSinceLapRef.current = 0;
 
     const previousLapAt = lastLapAtRef.current ?? timerStartAtRef.current;
     const lapTime = (now - previousLapAt) / 1000;
@@ -499,6 +509,7 @@ function WebCameraTimer({
       detectionEventsRef.current = [];
       timerStartAtRef.current = null;
       lastLapAtRef.current = null;
+      passesSinceLapRef.current = 0;
       recordingStartedAtRef.current = new Date().toISOString();
       recordingStartPerformanceRef.current = 0;
       recordingStopReasonRef.current = 'user';

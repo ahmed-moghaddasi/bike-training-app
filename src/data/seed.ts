@@ -71,8 +71,9 @@ export const drills: Drill[] = [
     },
     timingRule: {
       startRule: 'Timer starts on the first detected pass through the timing line.',
-      lapRule: 'Each later pass through the same line is one lap.',
+      lapRule: 'The first pass starts the timer. The opposite-side pass is halfway; the next pass completes one full lap.',
       comparisonContext: 'Same drill + same circle diameter.',
+      detectionsPerLap: 2,
     },
     howToRideSteps: [
       'Enter slowly and settle into one clean radius.',
