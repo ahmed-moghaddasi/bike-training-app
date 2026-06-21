@@ -100,7 +100,7 @@ export default function App() {
           currentBikeId={currentBikeId}
           onOpenDrills={() => go({ name: 'drills' })}
           onOpenDrill={(id) => go({ name: 'drill', drillId: id })}
-          onOpenSession={(id) => go({ name: 'session', sessionId: id })}
+          onOpenSession={(session) => go({ name: 'session', sessionId: session.id, session })}
           onOpenSessions={() => go({ name: 'sessions' })}
           onOpenProgress={() => go({ name: 'progress' })}
         />

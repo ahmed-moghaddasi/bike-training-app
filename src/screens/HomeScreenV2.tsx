@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Animated,
   Pressable,
@@ -17,6 +17,7 @@ import {
   latestSession,
   sessionsForContext,
 } from '../lib/metrics';
+import { isSupabaseConfigured, loadSavedSessions } from '../lib/supabase';
 import { colors, fonts, radius, spacing } from '../theme';
 import type { Drill, Session } from '../types';
 
@@ -40,7 +41,7 @@ interface HomeScreenV2Props {
   currentBikeId: string;
   onOpenDrills: () => void;
   onOpenDrill: (drillId: string) => void;
-  onOpenSession: (sessionId: string) => void;
+  onOpenSession: (session: Session) => void;
   onOpenSessions: () => void;
   onOpenProgress: () => void;
 }
@@ -54,23 +55,54 @@ export function HomeScreenV2({
   onOpenProgress,
 }: HomeScreenV2Props) {
   const scrollY = useMemo(() => new Animated.Value(0), []);
+  const [cloudSessions, setCloudSessions] = useState<Session[] | null>(null);
+  const [cloudError, setCloudError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    if (!isSupabaseConfigured) {
+      setCloudSessions(sessions);
+      return () => {
+        active = false;
+      };
+    }
+    void loadSavedSessions()
+      .then((saved) => {
+        if (active) setCloudSessions(saved);
+      })
+      .catch((error) => {
+        if (active) {
+          setCloudSessions([]);
+          setCloudError(error instanceof Error ? error.message : 'Could not load training data.');
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const actualSessions = cloudSessions ?? [];
 
   // ── Derived data ──────────────────────────────────────────────────────────
 
   const recent = useMemo(
     () =>
-      [...sessions]
+      [...actualSessions]
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
         .slice(0, 2),
-    [],
+    [actualSessions],
   );
 
   const workingDrills = useMemo(
-    () =>
-      ['figure-eight', 'hairpin']
-        .map((id) => drills.find((d) => d.id === id))
-        .filter(Boolean) as Drill[],
-    [],
+    () => {
+      const recentDrillIds = [...actualSessions]
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .map((session) => session.drillId)
+        .filter((id, index, all) => all.indexOf(id) === index)
+        .slice(0, 2);
+      return recentDrillIds.map((id) => drills.find((drill) => drill.id === id)).filter(Boolean) as Drill[];
+    },
+    [actualSessions],
   );
 
   // ── Nav card animation (scroll-driven, reversible) ────────────────────────
@@ -127,13 +159,17 @@ export function HomeScreenV2({
         </Pressable>
 
         {/* ── Working On ───────────────────────────────────────────── */}
+        {cloudError && <Text style={styles.homeStatusError}>{cloudError}</Text>}
         <RuleLabel text="Working On" />
         <View style={styles.cardList}>
+          {cloudSessions === null && <Text style={styles.homeStatus}>Loading training data...</Text>}
+          {cloudSessions !== null && workingDrills.length === 0 && <Text style={styles.homeStatus}>No practiced drills yet.</Text>}
           {workingDrills.map((drill) => (
             <WorkingDrillCard
               key={drill.id}
               drill={drill}
               currentBikeId={currentBikeId}
+              sessionData={actualSessions}
               onPress={() => onOpenDrill(drill.id)}
             />
           ))}
@@ -142,11 +178,12 @@ export function HomeScreenV2({
         {/* ── Recent Sessions ──────────────────────────────────────── */}
         <RuleLabel text="Recent Sessions" />
         <View style={styles.cardList}>
+          {cloudSessions !== null && recent.length === 0 && <Text style={styles.homeStatus}>No saved sessions yet.</Text>}
           {recent.map((session) => (
             <RecentSessionCard
               key={session.id}
               session={session}
-              onPress={() => onOpenSession(session.id)}
+              onPress={() => onOpenSession(session)}
             />
           ))}
         </View>
@@ -218,13 +255,15 @@ function RuleLabel({ text }: { text: string }) {
 function WorkingDrillCard({
   drill,
   currentBikeId,
+  sessionData,
   onPress,
 }: {
   drill: Drill;
   currentBikeId: string;
+  sessionData: Session[];
   onPress: () => void;
 }) {
-  const ctxSessions = sessionsForContext(sessions, {
+  const ctxSessions = sessionsForContext(sessionData, {
     bikeId: currentBikeId,
     drillId: drill.id,
     setupVariantId: drill.defaultSetupVariantId,
@@ -261,6 +300,7 @@ function RecentSessionCard({ session, onPress }: { session: Session; onPress: ()
   const drill = drills.find((d) => d.id === session.drillId);
   const bike  = bikes.find((b) => b.id === session.bikeId);
   const setup = getSetupName(drill, session.setupVariantId);
+  const hasLaps = session.laps.length > 0;
 
   return (
     <Pressable style={styles.sessionCard} onPress={onPress}>
@@ -275,8 +315,8 @@ function RecentSessionCard({ session, onPress }: { session: Session; onPress: ()
       </Text>
 
       <View style={styles.sessionStats}>
-        <Stat value={formatLap(bestLap(session))} label="Best lap" highlight />
-        <Stat value={formatLap(averageLap(session))} label="Average" />
+        <Stat value={hasLaps ? formatLap(bestLap(session)) : '--'} label="Best lap" highlight />
+        <Stat value={hasLaps ? formatLap(averageLap(session)) : '--'} label="Average" />
         {session.videoSaved && <Stat value="●" label="Video" />}
       </View>
     </Pressable>
@@ -317,13 +357,20 @@ function NavCard({
       style={[styles.navCard, variant === 'back' && styles.navCardBack]}
       onPress={onPress}
     >
-      <Text style={styles.navEyebrow}>Go To</Text>
-      <View style={styles.navCardInner}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.navCardTitle}>{title}</Text>
-          <Text style={styles.navCardSub}>{sub}</Text>
+      <View style={[styles.navStripeRail, variant === 'back' && styles.navStripeRailBack]} pointerEvents="none">
+        {[0, 1, 2, 3, 4, 5].map((stripe) => (
+          <View key={stripe} style={[styles.navStripe, stripe % 2 === 1 && styles.navStripeDark]} />
+        ))}
+      </View>
+      <View style={styles.navCardContent}>
+        <Text style={styles.navEyebrow}>Go To</Text>
+        <View style={styles.navCardInner}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.navCardTitle}>{title}</Text>
+            <Text style={styles.navCardSub}>{sub}</Text>
+          </View>
+          <Text style={styles.navCardArrow}>↗</Text>
         </View>
-        <Text style={styles.navCardArrow}>↗</Text>
       </View>
     </Pressable>
   );
@@ -429,6 +476,19 @@ const styles = StyleSheet.create({
   cardList: {
     gap: 14,
     marginBottom: 30,
+  },
+  homeStatus: {
+    color: colors.silverDark,
+    fontFamily: fonts.body,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  homeStatusError: {
+    color: colors.red,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    lineHeight: 20,
+    marginBottom: 14,
   },
 
   // ── Working On card ───────────────────────────────────────────────
@@ -577,10 +637,38 @@ const styles = StyleSheet.create({
     backgroundColor: colors.red,
     borderRadius: radius.md,
     minHeight: NAV_CARD_H,
-    padding: 24,
+    overflow: 'hidden',
   },
   navCardBack: {
     backgroundColor: '#D42600', // slightly deeper red for depth
+  },
+  navStripeRail: {
+    backgroundColor: 'rgba(43,41,41,0.22)',
+    bottom: 0,
+    justifyContent: 'space-evenly',
+    left: 0,
+    paddingVertical: 8,
+    position: 'absolute',
+    top: 0,
+    width: 48,
+  },
+  navStripeRailBack: {
+    backgroundColor: 'rgba(43,41,41,0.34)',
+  },
+  navStripe: {
+    backgroundColor: 'rgba(242,241,240,0.18)',
+    height: 12,
+    width: '100%',
+  },
+  navStripeDark: {
+    backgroundColor: 'rgba(13,12,12,0.16)',
+  },
+  navCardContent: {
+    minHeight: NAV_CARD_H,
+    paddingBottom: 24,
+    paddingLeft: 72,
+    paddingRight: 24,
+    paddingTop: 24,
   },
   navEyebrow: {
     color: 'rgba(255,255,255,0.6)',
