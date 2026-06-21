@@ -139,7 +139,7 @@ function DrillsScreen({ currentBikeId, go }: { currentBikeId: string; go: (route
           return (
             <Pressable key={drill.id} style={styles.drillLibraryCard} onPress={() => go({ name: 'drill', drillId: drill.id })}>
               <Text style={styles.drillCardTitle}>{drill.name}</Text>
-              <DrillDiagram type={drill.diagramKey} />
+              <DrillDiagram type={drill.diagramKey} compact />
               <View style={styles.cardBottomRow}>
                 <Text style={styles.metricText}>Best: {formatLap(best)}s</Text>
                 <Text style={styles.metricText}>Last: {latest ? formatDate(latest.date, true) : 'Not yet'}</Text>
@@ -169,7 +169,7 @@ function DrillDetailScreen({ drillId, go }: { drillId: string; go: (route: Route
       </Section>
 
       <Section label="Setup">
-        <DrillDiagram type={drill.diagramKey} />
+        <DrillDiagram type={drill.diagramKey} variant="detail" />
         <StatGrid
           items={[
             ['Variant', setup.name],
