@@ -386,7 +386,6 @@ function WebCameraTimer({
     const detectionsPerLap = Math.max(1, drill.timingRule.detectionsPerLap ?? 1);
     passesSinceLapRef.current += 1;
     if (passesSinceLapRef.current < detectionsPerLap) {
-      flashDetection(detectionsPerLap === 2 ? 'Half Lap' : `Pass ${passesSinceLapRef.current} of ${detectionsPerLap}`);
       return;
     }
     passesSinceLapRef.current = 0;
