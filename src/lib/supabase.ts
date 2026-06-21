@@ -183,11 +183,9 @@ export async function saveSessionDraft(draft: SessionDraft, notes: string) {
 
 export async function loadSavedSessions(): Promise<SavedSession[]> {
   if (!supabase) throw new Error('Supabase is not configured.');
-  const clientId = getClientId();
   const { data, error } = await supabase
     .from('sessions')
     .select('id,date,bike_id,drill_id,setup_variant_id,video_path,video_saved,notes,laps(lap_number,time,timestamp_in_video)')
-    .eq('client_id', clientId)
     .order('date', { ascending: false });
 
   if (error) throw error;
@@ -227,7 +225,6 @@ export async function loadSavedSessions(): Promise<SavedSession[]> {
 
 export async function deleteSavedSession(sessionId: string, videoPath?: string) {
   if (!supabase) throw new Error('Supabase is not configured.');
-  const clientId = getClientId();
 
   if (videoPath) {
     const { error: videoError } = await supabase.storage.from('session-videos').remove([videoPath]);
@@ -237,8 +234,7 @@ export async function deleteSavedSession(sessionId: string, videoPath?: string) 
   const { error } = await supabase
     .from('sessions')
     .delete()
-    .eq('id', sessionId)
-    .eq('client_id', clientId);
+    .eq('id', sessionId);
 
   if (error) throw error;
 }
