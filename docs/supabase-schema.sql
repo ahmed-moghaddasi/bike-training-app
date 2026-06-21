@@ -47,7 +47,7 @@ create index if not exists sessions_client_date_idx on public.sessions(client_id
 create index if not exists laps_session_idx on public.laps(session_id, lap_number);
 create index if not exists detection_events_session_idx on public.detection_events(session_id, detected_at);
 
-grant select, insert on public.sessions to anon, authenticated;
+grant select, insert, update on public.sessions to anon, authenticated;
 grant select, insert on public.laps to anon, authenticated;
 grant select, insert on public.detection_events to anon, authenticated;
 
@@ -70,9 +70,15 @@ with check (auth.uid() = user_id or user_id is null);
 drop policy if exists "Users can update own sessions" on public.sessions;
 create policy "Users can update own sessions"
 on public.sessions for update
-to authenticated
-using (auth.uid() = user_id)
-with check (auth.uid() = user_id);
+to authenticated, anon
+using (
+  auth.uid() = user_id
+  or (user_id is null and client_id is not null)
+)
+with check (
+  auth.uid() = user_id
+  or (user_id is null and client_id is not null)
+);
 
 drop policy if exists "Users can delete own sessions" on public.sessions;
 create policy "Users can delete own sessions"

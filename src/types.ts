@@ -81,6 +81,9 @@ export type SessionDraft = {
   laps: Lap[];
   videoUri?: string;
   videoSaved: boolean;
+  videoSizeBytes?: number;
+  videoDurationSeconds?: number;
+  recordingStopReason?: 'user' | 'maxDuration';
   startedAt: string;
   endedAt: string;
   detectionEvents: DetectionEvent[];

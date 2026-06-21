@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import type { DetectionEvent, Lap, SessionDraft } from '../types';
+import { MAX_UPLOAD_BYTES } from './recording';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -39,6 +40,12 @@ type SavedSessionRow = {
   }>;
 };
 
+export type SaveSessionResult = {
+  sessionId: string;
+  videoSaved: boolean;
+  videoError?: string;
+};
+
 function getVideoExtension(videoUri: string) {
   if (videoUri.includes('webm')) return 'webm';
   return 'mp4';
@@ -71,18 +78,6 @@ export async function saveSessionDraft(draft: SessionDraft, notes: string) {
   if (!supabase) throw new Error('Supabase is not configured.');
   const clientId = getClientId();
 
-  let videoPath: string | undefined;
-  if (draft.videoUri) {
-    const blob = await blobFromUri(draft.videoUri);
-    const extension = getVideoExtension(blob.type || draft.videoUri);
-    videoPath = `anonymous/${clientId}/${draft.startedAt.replace(/[:.]/g, '-')}-${draft.drillId}.${extension}`;
-    const { error: uploadError } = await supabase.storage.from('session-videos').upload(videoPath, blob, {
-      contentType: blob.type || `video/${extension}`,
-      upsert: true,
-    });
-    if (uploadError) throw uploadError;
-  }
-
   const times = draft.laps.map((lap) => lap.time);
   const bestLap = times.length ? Math.min(...times) : null;
   const averageLap = times.length ? times.reduce((sum, time) => sum + time, 0) / times.length : null;
@@ -96,8 +91,8 @@ export async function saveSessionDraft(draft: SessionDraft, notes: string) {
       bike_id: draft.bikeId,
       drill_id: draft.drillId,
       setup_variant_id: draft.setupVariantId,
-      video_path: videoPath,
-      video_saved: Boolean(videoPath),
+      video_path: null,
+      video_saved: false,
       notes: notes.trim() || null,
       best_lap: bestLap,
       average_lap: averageLap,
@@ -135,7 +130,55 @@ export async function saveSessionDraft(draft: SessionDraft, notes: string) {
     if (detectionError) throw detectionError;
   }
 
-  return session.id as string;
+  const sessionId = session.id as string;
+  if (!draft.videoUri) return { sessionId, videoSaved: false } satisfies SaveSessionResult;
+
+  let blob: Blob;
+  try {
+    blob = await blobFromUri(draft.videoUri);
+  } catch (error) {
+    return {
+      sessionId,
+      videoSaved: false,
+      videoError: error instanceof Error ? error.message : 'Could not read the recorded video.',
+    } satisfies SaveSessionResult;
+  }
+
+  if (blob.size > MAX_UPLOAD_BYTES) {
+    const sizeMb = (blob.size / (1024 * 1024)).toFixed(1);
+    return {
+      sessionId,
+      videoSaved: false,
+      videoError: `Video is ${sizeMb} MB and exceeds the 45 MB upload limit.`,
+    } satisfies SaveSessionResult;
+  }
+
+  const extension = getVideoExtension(blob.type || draft.videoUri);
+  const videoPath = `anonymous/${clientId}/${draft.startedAt.replace(/[:.]/g, '-')}-${draft.drillId}.${extension}`;
+  const { error: uploadError } = await supabase.storage.from('session-videos').upload(videoPath, blob, {
+    contentType: blob.type || `video/${extension}`,
+    upsert: true,
+  });
+
+  if (uploadError) {
+    return {
+      sessionId,
+      videoSaved: false,
+      videoError: uploadError.message,
+    } satisfies SaveSessionResult;
+  }
+
+  const { error: updateError } = await supabase
+    .from('sessions')
+    .update({ video_path: videoPath, video_saved: true })
+    .eq('id', sessionId)
+    .eq('client_id', clientId)
+    .select('id')
+    .single();
+
+  if (updateError) throw updateError;
+
+  return { sessionId, videoSaved: true } satisfies SaveSessionResult;
 }
 
 export async function loadSavedSessions(): Promise<SavedSession[]> {

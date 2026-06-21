@@ -9,7 +9,7 @@ alter table public.sessions
 
 create index if not exists sessions_client_date_idx on public.sessions(client_id, date desc);
 
-grant select, insert on public.sessions to anon, authenticated;
+grant select, insert, update on public.sessions to anon, authenticated;
 grant select, insert on public.laps to anon, authenticated;
 grant select, insert on public.detection_events to anon, authenticated;
 
@@ -24,6 +24,19 @@ create policy "Users can insert own sessions"
 on public.sessions for insert
 to authenticated, anon
 with check (auth.uid() = user_id or user_id is null);
+
+drop policy if exists "Users can update own sessions" on public.sessions;
+create policy "Users can update own sessions"
+on public.sessions for update
+to authenticated, anon
+using (
+  auth.uid() = user_id
+  or (user_id is null and client_id is not null)
+)
+with check (
+  auth.uid() = user_id
+  or (user_id is null and client_id is not null)
+);
 
 drop policy if exists "Users can read own laps" on public.laps;
 create policy "Users can read own laps"

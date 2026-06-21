@@ -6,6 +6,7 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -25,6 +26,14 @@ import {
   latestSession,
   sessionsForContext,
 } from './src/lib/metrics';
+import { createMotionDetector, type MotionDetector } from './src/lib/motionDetector';
+import {
+  CAMERA_MEDIA_CONSTRAINTS,
+  formatFileSize,
+  getMediaRecorderOptions,
+  MAX_RECORDING_DURATION_MS,
+  validateRecordingBlob,
+} from './src/lib/recording';
 import { isSupabaseConfigured, loadSavedSessions, saveSessionDraft } from './src/lib/supabase';
 import { colors, fonts, radius, spacing } from './src/theme';
 import type { Bike, DetectionEvent, Drill, Lap, ProgressContext, Session, SessionDraft, SetupVariant } from './src/types';
@@ -52,25 +61,8 @@ const routeTitles: Record<Route['name'], string> = {
   drillProgress: 'Drill Progress',
 };
 
-const DETECTION_INTERVAL_MS = 100;
-const DETECTION_COOLDOWN_MS = 3000;
-const DETECTION_THRESHOLD = 28;
-const DETECTION_STRIP_WIDTH = 24;
-
-const VIDEO_MIME_CANDIDATES = [
-  'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-  'video/mp4',
-  'video/webm;codecs=vp9,opus',
-  'video/webm;codecs=vp8,opus',
-  'video/webm',
-];
-
-function pickRecordingMimeType() {
-  if (typeof window === 'undefined' || !('MediaRecorder' in window)) return undefined;
-  const MediaRecorderCtor = window.MediaRecorder;
-  if (!MediaRecorderCtor.isTypeSupported) return undefined;
-  return VIDEO_MIME_CANDIDATES.find((mimeType) => MediaRecorderCtor.isTypeSupported(mimeType));
-}
+const DETECTION_INTERVAL_MS = 50;
+const DETECTION_ZONE_WIDTH_RATIO = 0.18;
 
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
@@ -263,20 +255,22 @@ function WebCameraTimer({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const detectionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const baselineRef = useRef<number | null>(null);
-  const lastDetectionAtRef = useRef(0);
+  const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const detectorRef = useRef<MotionDetector>(createMotionDetector());
   const timerStartAtRef = useRef<number | null>(null);
   const lastLapAtRef = useRef<number | null>(null);
   const recordingStartedAtRef = useRef<string>(new Date().toISOString());
+  const recordingStopReasonRef = useRef<'user' | 'maxDuration'>('user');
   const detectionEventsRef = useRef<DetectionEvent[]>([]);
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
   const shouldRouteOnStopRef = useRef(false);
 
-  const [cameraState, setCameraState] = useState<'loading' | 'ready' | 'recording' | 'error'>('loading');
+  const [cameraState, setCameraState] = useState<'loading' | 'ready' | 'armed' | 'recording' | 'error'>('loading');
   const [cameraMessage, setCameraMessage] = useState('Requesting camera permission...');
   const [laps, setLaps] = useState<Lap[]>([]);
   const [latestOverlay, setLatestOverlay] = useState<string | null>(null);
   const [isFlashing, setIsFlashing] = useState(false);
+  const [motionScore, setMotionScore] = useState(0);
 
   const latestLap = laps.at(-1);
   const best = laps.length ? Math.min(...laps.map((lap) => lap.time)) : undefined;
@@ -285,6 +279,13 @@ function WebCameraTimer({
     if (detectionTimerRef.current) {
       clearInterval(detectionTimerRef.current);
       detectionTimerRef.current = null;
+    }
+  }
+
+  function clearMaxDurationTimer() {
+    if (maxDurationTimerRef.current) {
+      clearTimeout(maxDurationTimerRef.current);
+      maxDurationTimerRef.current = null;
     }
   }
 
@@ -310,6 +311,7 @@ function WebCameraTimer({
 
   function cleanupCamera() {
     stopDetection();
+    clearMaxDurationTimer();
     void releaseWakeLock();
     stopCameraTracks();
   }
@@ -324,14 +326,7 @@ function WebCameraTimer({
     try {
       setCameraState('loading');
       setCameraMessage('Requesting camera permission...');
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-      });
+      const stream = await navigator.mediaDevices.getUserMedia(CAMERA_MEDIA_CONSTRAINTS);
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -352,7 +347,7 @@ function WebCameraTimer({
     window.setTimeout(() => setLatestOverlay(null), 1400);
   }
 
-  function sampleMotionScore() {
+  function sampleMotionFrame() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return undefined;
@@ -360,29 +355,19 @@ function WebCameraTimer({
     const context = canvas.getContext('2d', { willReadFrequently: true });
     if (!context) return undefined;
 
+    const sampleWidth = 64;
     const sampleHeight = 120;
-    const sourceX = Math.max(0, Math.floor(video.videoWidth / 2 - DETECTION_STRIP_WIDTH / 2));
-    canvas.width = DETECTION_STRIP_WIDTH;
+    const sourceWidth = Math.max(64, Math.floor(video.videoWidth * DETECTION_ZONE_WIDTH_RATIO));
+    const sourceX = Math.max(0, Math.floor((video.videoWidth - sourceWidth) / 2));
+    canvas.width = sampleWidth;
     canvas.height = sampleHeight;
-    context.drawImage(video, sourceX, 0, DETECTION_STRIP_WIDTH, video.videoHeight, 0, 0, DETECTION_STRIP_WIDTH, sampleHeight);
-
-    const pixels = context.getImageData(0, 0, DETECTION_STRIP_WIDTH, sampleHeight).data;
-    let luminanceTotal = 0;
-    for (let index = 0; index < pixels.length; index += 4) {
-      luminanceTotal += pixels[index] * 0.299 + pixels[index + 1] * 0.587 + pixels[index + 2] * 0.114;
-    }
-    const average = luminanceTotal / (pixels.length / 4);
-    const baseline = baselineRef.current;
-    baselineRef.current = baseline === null ? average : baseline * 0.92 + average * 0.08;
-    return baseline === null ? 0 : Math.abs(average - baseline);
+    context.drawImage(video, sourceX, 0, sourceWidth, video.videoHeight, 0, 0, sampleWidth, sampleHeight);
+    return context.getImageData(0, 0, sampleWidth, sampleHeight);
   }
 
   function registerDetection(score: number) {
     const now = performance.now();
-    if (now - lastDetectionAtRef.current < DETECTION_COOLDOWN_MS) return;
-    lastDetectionAtRef.current = now;
-
-    const videoTimestamp = recorderRef.current ? (now - recordingStartPerformanceRef.current) / 1000 : 0;
+    const videoTimestamp = recordingStartPerformanceRef.current ? Math.max(0, (now - recordingStartPerformanceRef.current) / 1000) : 0;
     if (timerStartAtRef.current === null) {
       timerStartAtRef.current = now;
       lastLapAtRef.current = now;
@@ -393,6 +378,7 @@ function WebCameraTimer({
         score,
       };
       detectionEventsRef.current = [...detectionEventsRef.current, event];
+      startMediaRecorder(now);
       flashDetection('Timer Started');
       return;
     }
@@ -419,12 +405,20 @@ function WebCameraTimer({
   const lapsRef = useRef<Lap[]>([]);
 
   function startDetectionLoop() {
-    baselineRef.current = null;
+    detectorRef.current.reset();
     stopDetection();
     detectionTimerRef.current = setInterval(() => {
-      const score = sampleMotionScore();
-      if (score !== undefined && score > DETECTION_THRESHOLD) {
-        registerDetection(score);
+      const frame = sampleMotionFrame();
+      if (!frame) return;
+      const analysis = detectorRef.current.analyze(frame, performance.now());
+      setMotionScore(analysis.score);
+      if (!analysis.calibrated) {
+        setCameraMessage(`Calibrating timing zone ${Math.round(analysis.calibrationProgress * 100)}%`);
+      } else if (timerStartAtRef.current === null) {
+        setCameraMessage('Armed. Ride through the red timing zone.');
+      }
+      if (analysis.detection) {
+        registerDetection(analysis.score);
       }
     }, DETECTION_INTERVAL_MS);
   }
@@ -439,37 +433,30 @@ function WebCameraTimer({
     }
   }
 
-  async function startRecording() {
-    if (!streamRef.current) {
-      await startCamera();
-      if (!streamRef.current) return;
-    }
-    if (!('MediaRecorder' in window)) {
-      setCameraState('error');
-      setCameraMessage('This browser does not support video recording.');
+  function startMediaRecorder(startedAtPerformance: number) {
+    recordingStartedAtRef.current = new Date().toISOString();
+    recordingStartPerformanceRef.current = startedAtPerformance;
+    if (!streamRef.current || !('MediaRecorder' in window)) {
+      setCameraState('recording');
+      setCameraMessage('Timer running without video recording support.');
       return;
     }
 
     try {
-      chunksRef.current = [];
-      lapsRef.current = [];
-      detectionEventsRef.current = [];
-      timerStartAtRef.current = null;
-      lastLapAtRef.current = null;
-      lastDetectionAtRef.current = 0;
-      recordingStartedAtRef.current = new Date().toISOString();
-      recordingStartPerformanceRef.current = performance.now();
-      setLaps([]);
-
-      const mimeType = pickRecordingMimeType();
-      const recorder = mimeType ? new MediaRecorder(streamRef.current, { mimeType }) : new MediaRecorder(streamRef.current);
+      const recorder = new MediaRecorder(streamRef.current, getMediaRecorderOptions());
       recorderRef.current = recorder;
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunksRef.current.push(event.data);
       };
       recorder.onstop = () => {
+        clearMaxDurationTimer();
         const blobType = recorder.mimeType || chunksRef.current[0]?.type || 'video/mp4';
-        const videoUri = chunksRef.current.length ? URL.createObjectURL(new Blob(chunksRef.current, { type: blobType })) : undefined;
+        const videoBlob = new Blob(chunksRef.current, { type: blobType });
+        const validation = validateRecordingBlob(videoBlob);
+        const videoUri = videoBlob.size > 0 ? URL.createObjectURL(videoBlob) : undefined;
+        const videoDurationSeconds = recordingStartPerformanceRef.current
+          ? Math.max(0, (performance.now() - recordingStartPerformanceRef.current) / 1000)
+          : 0;
         const draft: SessionDraft = {
           drillId: drill.id,
           setupVariantId: setup.id,
@@ -477,6 +464,9 @@ function WebCameraTimer({
           laps: lapsRef.current,
           videoUri,
           videoSaved: Boolean(videoUri),
+          videoSizeBytes: validation.sizeBytes,
+          videoDurationSeconds,
+          recordingStopReason: recordingStopReasonRef.current,
           startedAt: recordingStartedAtRef.current,
           endedAt: new Date().toISOString(),
           detectionEvents: detectionEventsRef.current,
@@ -489,17 +479,44 @@ function WebCameraTimer({
         }
       };
       recorder.start(1000);
-      void requestWakeLock();
-      startDetectionLoop();
+      maxDurationTimerRef.current = setTimeout(() => endRecording('maxDuration'), MAX_RECORDING_DURATION_MS);
       setCameraState('recording');
-      setCameraMessage('Recording. First crossing starts the timer.');
+      setCameraMessage('Recording and timing laps.');
     } catch (error) {
-      setCameraState('error');
-      setCameraMessage(error instanceof Error ? error.message : 'Recording could not start.');
+      recorderRef.current = null;
+      setCameraState('recording');
+      setCameraMessage(error instanceof Error ? `Timer running without video: ${error.message}` : 'Timer running without video.');
     }
   }
 
-  function endRecording() {
+  async function armSession() {
+    if (!streamRef.current) {
+      await startCamera();
+      if (!streamRef.current) return;
+    }
+
+    try {
+      chunksRef.current = [];
+      lapsRef.current = [];
+      detectionEventsRef.current = [];
+      timerStartAtRef.current = null;
+      lastLapAtRef.current = null;
+      recordingStartedAtRef.current = new Date().toISOString();
+      recordingStartPerformanceRef.current = 0;
+      recordingStopReasonRef.current = 'user';
+      setLaps([]);
+      void requestWakeLock();
+      startDetectionLoop();
+      setCameraState('armed');
+      setCameraMessage('Calibrating. Keep the timing zone clear for a moment.');
+    } catch (error) {
+      setCameraState('error');
+      setCameraMessage(error instanceof Error ? error.message : 'Session could not be armed.');
+    }
+  }
+
+  function endRecording(reason: 'user' | 'maxDuration' = 'user') {
+    recordingStopReasonRef.current = reason;
     shouldRouteOnStopRef.current = true;
     stopDetection();
     const recorder = recorderRef.current;
@@ -513,6 +530,7 @@ function WebCameraTimer({
       bikeId: currentBike.id,
       laps: lapsRef.current,
       videoSaved: false,
+      recordingStopReason: reason,
       startedAt: recordingStartedAtRef.current,
       endedAt: new Date().toISOString(),
       detectionEvents: detectionEventsRef.current,
@@ -537,7 +555,7 @@ function WebCameraTimer({
     <Page title="Camera Timer" subtitle={`${drill.name} · ${setup.name}`}>
       <View style={styles.cameraShell}>
         <View style={styles.recRow}>
-          <Text style={styles.recText}>{cameraState === 'recording' ? 'REC' : 'Aim + Calibrate'}</Text>
+          <Text style={styles.recText}>{cameraState === 'recording' ? 'REC' : cameraState === 'armed' ? 'ARMED' : 'Aim + Calibrate'}</Text>
           <Text style={styles.recText}>Lap {laps.length}</Text>
         </View>
         <View style={[styles.cameraView, isFlashing && styles.cameraViewFlash]}>
@@ -559,8 +577,9 @@ function WebCameraTimer({
             ref: canvasRef,
             style: { display: 'none' },
           })}
+          <View style={styles.timingZone} />
           <View style={[styles.timingLine, isFlashing && styles.timingLineFlash]} />
-          {cameraState !== 'ready' && cameraState !== 'recording' && <Text style={styles.cameraOverlay}>{cameraState === 'error' ? 'Camera Error' : 'Loading'}</Text>}
+          {cameraState !== 'ready' && cameraState !== 'armed' && cameraState !== 'recording' && <Text style={styles.cameraOverlay}>{cameraState === 'error' ? 'Camera Error' : 'Loading'}</Text>}
           {latestOverlay && (
             <View style={styles.lapFlashOverlay}>
               <Text style={styles.lapFlashText}>{latestOverlay}</Text>
@@ -572,13 +591,14 @@ function WebCameraTimer({
         <View style={styles.cameraStats}>
           <MetricMini label="Latest" value={latestLap ? `${formatLap(latestLap.time)}s` : '--'} />
           <MetricMini label="Best" value={best ? `${formatLap(best)}s` : '--'} />
+          <MetricMini label="Motion" value={`${motionScore.toFixed(1)}x`} />
         </View>
       </View>
       {cameraState === 'error' && <SecondaryButton label="Retry Camera" onPress={() => void startCamera()} />}
-      {cameraState === 'recording' ? (
-        <PrimaryButton label="End Session" onPress={endRecording} />
+      {cameraState === 'armed' || cameraState === 'recording' ? (
+        <PrimaryButton label="End Session" onPress={() => endRecording('user')} />
       ) : (
-        <PrimaryButton label="Start Recording" onPress={() => void startRecording()} />
+        <PrimaryButton label="Arm Session" onPress={() => void armSession()} />
       )}
     </Page>
   );
@@ -607,6 +627,7 @@ function SessionSummaryScreen({
   const [notes, setNotes] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveVideo, setSaveVideo] = useState(Boolean(draft?.videoUri));
 
   useEffect(() => {
     return () => {
@@ -615,6 +636,10 @@ function SessionSummaryScreen({
   }, [draft?.videoUri]);
 
   async function saveRecordedSession() {
+    if (saveStatus === 'saved') {
+      go({ name: 'sessions' });
+      return;
+    }
     if (!draft) {
       go({ name: 'sessions' });
       return;
@@ -626,11 +651,16 @@ function SessionSummaryScreen({
     }
     try {
       setSaveStatus('saving');
-      setSaveMessage('Uploading session...');
-      await saveSessionDraft(draft, notes);
+      setSaveMessage(saveVideo ? 'Saving session and video...' : 'Saving session...');
+      const result = await saveSessionDraft(saveVideo ? draft : { ...draft, videoUri: undefined, videoSaved: false }, notes);
       setSaveStatus('saved');
-      setSaveMessage('Session saved.');
-      go({ name: 'sessions' });
+      setSaveMessage(
+        result.videoError
+          ? `Session and laps saved. Video was not uploaded: ${result.videoError}`
+          : result.videoSaved
+            ? 'Session, laps, and video saved.'
+            : 'Session and laps saved without video.'
+      );
     } catch (error) {
       setSaveStatus('error');
       setSaveMessage(error instanceof Error ? error.message : 'Could not save the session.');
@@ -679,6 +709,21 @@ function SessionSummaryScreen({
         ) : (
           <Text style={styles.bodyText}>{draft ? 'Video was not saved for this run.' : 'Saved · placeholder recording attached to this mock session.'}</Text>
         )}
+        {draft?.videoUri && (
+          <>
+            <View style={styles.videoSaveRow}>
+              <View style={styles.videoSaveCopy}>
+                <Text style={styles.cardTitle}>Save video</Text>
+                <Text style={styles.cardSub}>
+                  {draft.videoSizeBytes !== undefined ? formatFileSize(draft.videoSizeBytes) : 'Size unavailable'}
+                  {draft.videoDurationSeconds !== undefined ? ` · ${Math.round(draft.videoDurationSeconds)}s` : ''}
+                </Text>
+              </View>
+              <Switch value={saveVideo} onValueChange={setSaveVideo} trackColor={{ false: colors.silverMid, true: colors.red }} />
+            </View>
+            {draft.recordingStopReason === 'maxDuration' && <Text style={styles.cameraTip}>Recording stopped at the 8-minute limit.</Text>}
+          </>
+        )}
       </Section>
 
       <Section label="Notes">
@@ -694,7 +739,7 @@ function SessionSummaryScreen({
 
       {saveMessage && <Text style={[styles.saveMessage, saveStatus === 'error' && styles.saveMessageError]}>{saveMessage}</Text>}
 
-      <PrimaryButton label={saveStatus === 'saving' ? 'Saving...' : 'Save Session'} onPress={() => void saveRecordedSession()} />
+      <PrimaryButton label={saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'View Sessions' : 'Save Session'} onPress={() => void saveRecordedSession()} />
       <Pressable style={styles.discardButton} onPress={() => go({ name: 'drill', drillId })}>
         <Text style={styles.discardText}>Discard</Text>
       </Pressable>
@@ -1428,6 +1473,18 @@ const styles = StyleSheet.create({
     top: 0,
     width: 5,
   },
+  timingZone: {
+    backgroundColor: 'rgba(230, 51, 42, 0.12)',
+    borderLeftColor: 'rgba(255, 255, 255, 0.7)',
+    borderLeftWidth: 1,
+    borderRightColor: 'rgba(255, 255, 255, 0.7)',
+    borderRightWidth: 1,
+    bottom: 0,
+    left: '41%',
+    position: 'absolute',
+    top: 0,
+    width: '18%',
+  },
   timingLineFlash: {
     backgroundColor: colors.white,
     shadowColor: colors.red,
@@ -1483,8 +1540,24 @@ const styles = StyleSheet.create({
   },
   cameraStats: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
     marginTop: 12,
+  },
+  videoSaveRow: {
+    alignItems: 'center',
+    backgroundColor: colors.white,
+    borderColor: colors.silverMid,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    marginTop: 12,
+    padding: 14,
+  },
+  videoSaveCopy: {
+    flex: 1,
+    gap: 4,
+    paddingRight: 12,
   },
   resultHero: {
     alignItems: 'center',
