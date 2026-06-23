@@ -36,8 +36,8 @@ export interface MotionAnalysis {
 }
 
 export const DEFAULT_MOTION_DETECTOR_CONFIG: MotionDetectorConfig = {
-  pixelDeltaThreshold: 20,
-  changedRatioThreshold: 0.03,
+  pixelDeltaThreshold: 16,
+  changedRatioThreshold: 0.02,
   consecutiveFrames: 2,
   cooldownMs: 3_000,
   calibrationFrames: 12,
