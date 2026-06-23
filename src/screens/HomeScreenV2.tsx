@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Animated,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
-  type ViewStyle,
 } from 'react-native';
 import { bikes, drills, sessions } from '../data/seed';
 import {
@@ -21,21 +20,7 @@ import { isSupabaseConfigured, loadSavedSessions } from '../lib/supabase';
 import { colors, fonts, radius, spacing } from '../theme';
 import type { Drill, Session } from '../types';
 
-// ─── Nav card stack constants ────────────────────────────────────────────────
-
-const NAV_CARD_H = 148;       // approximate rendered height of each nav card
-const NAV_PEEK   = 48;        // px of back card visible below front card (stacked state)
-const NAV_GAP    = 14;        // px gap between cards (expanded) — matches cardList gap
-// Total travel of the back card from peeking → natural position
-const NAV_TRAVEL = NAV_CARD_H - NAV_PEEK + NAV_GAP; // 114
-
-// Scroll range over which the stack opens/closes.
-// The nav section sits ~900px down the page. On a typical phone (~844px tall)
-// it enters the viewport at scroll ≈ 60px and is fully in view by ~400px.
-const STACK_SCROLL_START = 60;
-const STACK_SCROLL_END   = 400;
-
-// ─────────────────────────────────────────────────────────────────────────────
+const NAV_CARD_H = 132;
 
 interface HomeScreenV2Props {
   currentBikeId: string;
@@ -54,7 +39,6 @@ export function HomeScreenV2({
   onOpenSessions,
   onOpenProgress,
 }: HomeScreenV2Props) {
-  const scrollY = useMemo(() => new Animated.Value(0), []);
   const [cloudSessions, setCloudSessions] = useState<Session[] | null>(null);
   const [cloudError, setCloudError] = useState<string | null>(null);
 
@@ -89,7 +73,7 @@ export function HomeScreenV2({
     () =>
       [...actualSessions]
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-        .slice(0, 2),
+        .slice(0, 1),
     [actualSessions],
   );
 
@@ -99,47 +83,18 @@ export function HomeScreenV2({
         .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
         .map((session) => session.drillId)
         .filter((id, index, all) => all.indexOf(id) === index)
-        .slice(0, 2);
+        .slice(0, 1);
       return recentDrillIds.map((id) => drills.find((drill) => drill.id === id)).filter(Boolean) as Drill[];
     },
     [actualSessions],
   );
 
-  // ── Nav card animation (scroll-driven, reversible) ────────────────────────
-  //
-  // Back card starts at translateY=0 (peeking NAV_PEEK px below front card).
-  // As scrollY increases it slides down to translateY=NAV_TRAVEL (natural pos).
-  // Scrolling back up reverses this automatically — no spring, no one-shot flag.
-
-  const navBackTranslateY = scrollY.interpolate({
-    inputRange: [STACK_SCROLL_START, STACK_SCROLL_END],
-    outputRange: [0, NAV_TRAVEL],
-    extrapolate: 'clamp',
-  });
-
-  const navBackScale = scrollY.interpolate({
-    inputRange: [STACK_SCROLL_START, STACK_SCROLL_END],
-    outputRange: [0.96, 1],
-    extrapolate: 'clamp',
-  });
-
-  const navBackOpacity = scrollY.interpolate({
-    inputRange: [STACK_SCROLL_START, STACK_SCROLL_END],
-    outputRange: [0.75, 1],
-    extrapolate: 'clamp',
-  });
-
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
     <View style={styles.wrapper}>
-      <Animated.ScrollView
+      <ScrollView
         contentContainerStyle={styles.page}
-        onScroll={Animated.event(
-          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: true },
-        )}
-        scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
       >
         {/* ── Brand header ─────────────────────────────────────────── */}
@@ -152,11 +107,6 @@ export function HomeScreenV2({
 
           <Text style={styles.tagline}>Parking-lot drills for track pace.</Text>
         </View>
-
-        {/* ── Drill Library CTA ────────────────────────────────────── */}
-        <Pressable style={styles.libraryButton} onPress={onOpenDrills}>
-          <Text style={styles.libraryButtonText}>Open Drill Library</Text>
-        </Pressable>
 
         {/* ── Working On ───────────────────────────────────────────── */}
         {cloudError && <Text style={styles.homeStatusError}>{cloudError}</Text>}
@@ -188,50 +138,26 @@ export function HomeScreenV2({
           ))}
         </View>
 
-        {/* ── Go To — stacked red nav cards ────────────────────────── */}
+        {/* ── Go To ────────────────────────────────────────────────── */}
         <RuleLabel text="Go To" />
-        <View>
-          {/* Sessions card: FRONT — rendered first so it occupies y=0..NAV_CARD_H */}
-          <View style={styles.navFrontSlot}>
-            <NavCard
-              title="Sessions"
-              sub="Training diary"
-              variant="front"
-              onPress={onOpenSessions}
-            />
-          </View>
-
-          {/*
-            Progress card: BACK — rendered second with a negative marginTop so
-            its layout top sits NAV_PEEK px below the front card's bottom edge,
-            making exactly NAV_PEEK px of it visible in the stacked state.
-            translateY animates 0 → NAV_TRAVEL to slide it to its natural position.
-          */}
-          <Animated.View
-            style={[
-              styles.navBackSlot,
-              {
-                marginTop: -(NAV_CARD_H - NAV_PEEK),
-                opacity: navBackOpacity,
-                transform: [
-                  { translateY: navBackTranslateY },
-                  { scale: navBackScale },
-                ],
-              },
-            ]}
-          >
-            <NavCard
-              title="Progress"
-              sub="Lap trends by drill"
-              variant="back"
-              onPress={onOpenProgress}
-            />
-          </Animated.View>
-
-          {/* Spacer: absorbs NAV_TRAVEL so nothing below collides with the back card */}
-          <View style={{ height: NAV_TRAVEL + 16 }} />
+        <View style={styles.navList}>
+          <NavCard
+            title="Drills"
+            sub="Setup library"
+            onPress={onOpenDrills}
+          />
+          <NavCard
+            title="Sessions"
+            sub="Training diary"
+            onPress={onOpenSessions}
+          />
+          <NavCard
+            title="Progress"
+            sub="Lap trends by drill"
+            onPress={onOpenProgress}
+          />
         </View>
-      </Animated.ScrollView>
+      </ScrollView>
 
     </View>
   );
@@ -344,20 +270,18 @@ function Stat({
 function NavCard({
   title,
   sub,
-  variant,
   onPress,
 }: {
   title: string;
   sub: string;
-  variant: 'front' | 'back';
   onPress: () => void;
 }) {
   return (
     <Pressable
-      style={[styles.navCard, variant === 'back' && styles.navCardBack]}
+      style={styles.navCard}
       onPress={onPress}
     >
-      <View style={[styles.navStripeRail, variant === 'back' && styles.navStripeRailBack]} pointerEvents="none">
+      <View style={styles.navStripeRail} pointerEvents="none">
         {[0, 1, 2, 3, 4, 5].map((stripe) => (
           <View key={stripe} style={[styles.navStripe, stripe % 2 === 1 && styles.navStripeDark]} />
         ))}
@@ -430,25 +354,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     letterSpacing: 0.3,
     lineHeight: 20,
-  },
-
-  // ── Library button ────────────────────────────────────────────────
-  libraryButton: {
-    alignItems: 'center',
-    backgroundColor: colors.red,
-    borderRadius: radius.pill,
-    justifyContent: 'center',
-    marginBottom: 30,
-    minHeight: 54,
-    paddingHorizontal: 24,
-  },
-  libraryButtonText: {
-    color: colors.white,
-    fontFamily: fonts.display,
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 1.0,
-    textTransform: 'uppercase',
   },
 
   // ── Section rule label ────────────────────────────────────────────
@@ -621,26 +526,15 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
 
-  // ── Nav card stack ────────────────────────────────────────────────
-  // Front card (Sessions) renders first in JSX and sits on top visually.
-  // Back card (Progress) renders second with negative marginTop and sits behind.
-  navFrontSlot: {
-    zIndex: 2,
-    elevation: 2,
+  // ── Nav cards ────────────────────────────────────────────────────
+  navList: {
+    gap: 14,
   },
-  navBackSlot: {
-    zIndex: 1,
-    elevation: 1,
-  },
-
   navCard: {
     backgroundColor: colors.red,
     borderRadius: radius.md,
     minHeight: NAV_CARD_H,
     overflow: 'hidden',
-  },
-  navCardBack: {
-    backgroundColor: '#D42600', // slightly deeper red for depth
   },
   navStripeRail: {
     backgroundColor: 'rgba(43,41,41,0.22)',
@@ -651,9 +545,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     width: 48,
-  },
-  navStripeRailBack: {
-    backgroundColor: 'rgba(43,41,41,0.34)',
   },
   navStripe: {
     backgroundColor: 'rgba(242,241,240,0.18)',
