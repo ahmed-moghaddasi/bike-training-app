@@ -5,6 +5,8 @@ import {
   StyleSheet,
   Text,
   View,
+  type StyleProp,
+  type ViewStyle,
 } from 'react-native';
 import { bikes, drills, sessions } from '../data/seed';
 import {
@@ -143,17 +145,14 @@ export function HomeScreenV2({
         <View style={styles.navList}>
           <NavCard
             title="Drills"
-            sub="Setup library"
             onPress={onOpenDrills}
           />
           <NavCard
             title="Sessions"
-            sub="Training diary"
             onPress={onOpenSessions}
           />
           <NavCard
             title="Progress"
-            sub="Lap trends by drill"
             onPress={onOpenProgress}
           />
         </View>
@@ -269,11 +268,9 @@ function Stat({
 /** Large red nav card */
 function NavCard({
   title,
-  sub,
   onPress,
 }: {
   title: string;
-  sub: string;
   onPress: () => void;
 }) {
   return (
@@ -281,22 +278,24 @@ function NavCard({
       style={styles.navCard}
       onPress={onPress}
     >
-      <View style={styles.navStripeRail} pointerEvents="none">
-        {[0, 1, 2, 3, 4, 5].map((stripe) => (
-          <View key={stripe} style={[styles.navStripe, stripe % 2 === 1 && styles.navStripeDark]} />
-        ))}
+      <View style={styles.navDiagonalWrap} pointerEvents="none">
+        <DiagonalStripe style={[styles.navDiagonalStripe, styles.navDiagonalSilver]} />
+        <DiagonalStripe style={[styles.navDiagonalStripe, styles.navDiagonalRed]} />
+        <DiagonalStripe style={[styles.navDiagonalStripe, styles.navDiagonalCharcoal]} />
       </View>
       <View style={styles.navCardContent}>
-        <Text style={styles.navEyebrow}>Go To</Text>
-        <View style={styles.navCardInner}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.navCardTitle}>{title}</Text>
-            <Text style={styles.navCardSub}>{sub}</Text>
-          </View>
-          <Text style={styles.navCardArrow}>↗</Text>
-        </View>
+        <Text style={styles.navCardTitle}>{title}</Text>
       </View>
     </Pressable>
+  );
+}
+
+function DiagonalStripe({ style }: { style: StyleProp<ViewStyle> }) {
+  return (
+    <View style={style}>
+      <View style={styles.navStripeShadeTop} />
+      <View style={styles.navStripeShadeBottom} />
+    </View>
   );
 }
 
@@ -531,71 +530,74 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   navCard: {
-    backgroundColor: colors.red,
+    backgroundColor: colors.charcoal,
     borderRadius: radius.md,
     minHeight: NAV_CARD_H,
     overflow: 'hidden',
   },
-  navStripeRail: {
-    backgroundColor: 'rgba(43,41,41,0.22)',
+  navDiagonalWrap: {
+    bottom: -26,
+    height: NAV_CARD_H + 56,
+    position: 'absolute',
+    right: -26,
+    top: -26,
+    width: 176,
+  },
+  navDiagonalStripe: {
+    borderRadius: 3,
+    height: 230,
+    overflow: 'hidden',
+    position: 'absolute',
+    shadowColor: colors.black,
+    shadowOffset: { width: -8, height: 10 },
+    shadowOpacity: 0.28,
+    shadowRadius: 10,
+    transform: [{ rotate: '24deg' }],
+    width: 32,
+  },
+  navDiagonalSilver: {
+    backgroundColor: colors.silverMid,
+    right: 112,
+    top: -24,
+  },
+  navDiagonalRed: {
+    backgroundColor: colors.red,
+    right: 64,
+    top: -12,
+  },
+  navDiagonalCharcoal: {
+    backgroundColor: colors.black,
+    right: 16,
+    top: 0,
+  },
+  navStripeShadeTop: {
+    backgroundColor: 'rgba(255,255,255,0.26)',
     bottom: 0,
-    justifyContent: 'space-evenly',
     left: 0,
-    paddingVertical: 8,
     position: 'absolute',
     top: 0,
-    width: 48,
+    width: 8,
   },
-  navStripe: {
-    backgroundColor: 'rgba(242,241,240,0.18)',
-    height: 12,
-    width: '100%',
-  },
-  navStripeDark: {
-    backgroundColor: 'rgba(13,12,12,0.16)',
+  navStripeShadeBottom: {
+    backgroundColor: 'rgba(0,0,0,0.22)',
+    bottom: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    width: 10,
   },
   navCardContent: {
+    justifyContent: 'center',
     minHeight: NAV_CARD_H,
-    paddingBottom: 24,
-    paddingLeft: 72,
-    paddingRight: 24,
-    paddingTop: 24,
-  },
-  navEyebrow: {
-    color: 'rgba(255,255,255,0.6)',
-    fontFamily: fonts.display,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 2.0,
-    marginBottom: 10,
-    textTransform: 'uppercase',
-  },
-  navCardInner: {
-    alignItems: 'flex-end',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingVertical: 24,
   },
   navCardTitle: {
     color: colors.white,
     fontFamily: fonts.display,
-    fontSize: 40,
+    fontSize: 38,
     fontWeight: '800',
-    letterSpacing: -0.5,
-    lineHeight: 42,
+    lineHeight: 40,
     textTransform: 'uppercase',
-  },
-  navCardSub: {
-    color: 'rgba(255,255,255,0.75)',
-    fontFamily: fonts.body,
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 6,
-  },
-  navCardArrow: {
-    color: 'rgba(255,255,255,0.55)',
-    fontFamily: fonts.display,
-    fontSize: 28,
-    fontWeight: '800',
-    paddingBottom: 4,
   },
 });
