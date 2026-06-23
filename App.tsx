@@ -66,21 +66,22 @@ const DETECTION_ZONE_WIDTH_RATIO = 0.18;
 
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
+  const [routeHistory, setRouteHistory] = useState<Route[]>([]);
   const [currentBikeId, setCurrentBikeId] = useState(bikes.find((bike) => bike.isCurrent)?.id ?? bikes[0].id);
   const currentBike = bikes.find((bike) => bike.id === currentBikeId) ?? bikes[0];
 
   function go(next: Route) {
+    setRouteHistory((history) => [...history, route]);
     setRoute(next);
   }
 
   function back() {
     if (route.name === 'home') return;
-    if (route.name === 'drill') return go({ name: 'drills' });
-    if (route.name === 'camera') return go({ name: 'drill', drillId: route.drillId });
-    if (route.name === 'summary') return go({ name: 'drill', drillId: route.drillId });
-    if (route.name === 'session') return go({ name: 'sessions' });
-    if (route.name === 'drillProgress') return go({ name: 'progress' });
-    go({ name: 'home' });
+    setRouteHistory((history) => {
+      const previous = history[history.length - 1] ?? { name: 'home' };
+      setRoute(previous);
+      return history.slice(0, -1);
+    });
   }
 
   return (
