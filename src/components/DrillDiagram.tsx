@@ -260,7 +260,7 @@ function CircleDetailDiagram() {
       <DimensionGuide x1={320} y1={88} x2={150} y2={88} />
       <DimensionGuide x1={320} y1={272} x2={150} y2={272} />
       <DimensionMeasure d="M150 88 V272 M140 88 H160 M140 272 H160" />
-      <DimensionLabel x={150} y={185} rotation={-90}>8m dia.</DimensionLabel>
+      <DimensionLabel x={126} y={185} rotation={-90}>8m dia.</DimensionLabel>
       <DimensionGuide x1={320} y1={272} x2={470} y2={272} />
       <DimensionGuide x1={320} y1={410} x2={470} y2={410} />
       <DimensionMeasure d="M470 272 V410 M460 272 H480 M460 410 H480" />
