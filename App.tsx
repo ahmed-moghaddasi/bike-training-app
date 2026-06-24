@@ -6,7 +6,6 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
@@ -34,6 +33,7 @@ import {
   MAX_RECORDING_DURATION_MS,
   validateRecordingBlob,
 } from './src/lib/recording';
+import { shareOrDownloadVideo } from './src/lib/localVideo';
 import { deleteSavedSession, isSupabaseConfigured, loadSavedSessions, saveSessionDraft } from './src/lib/supabase';
 import { colors, fonts, radius, spacing } from './src/theme';
 import type { Bike, DetectionEvent, Drill, Lap, ProgressContext, Session, SessionDraft, SetupVariant } from './src/types';
@@ -636,13 +636,40 @@ function SessionSummaryScreen({
   const [notes, setNotes] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const [saveVideo, setSaveVideo] = useState(Boolean(draft?.videoUri));
+  const [localVideoStatus, setLocalVideoStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [localVideoMessage, setLocalVideoMessage] = useState<string | null>(null);
 
   useEffect(() => {
     return () => {
       if (draft?.videoUri) URL.revokeObjectURL(draft.videoUri);
     };
   }, [draft?.videoUri]);
+
+  async function saveVideoToDevice() {
+    if (!draft?.videoUri) return;
+    try {
+      setLocalVideoStatus('saving');
+      setLocalVideoMessage(null);
+      const response = await fetch(draft.videoUri);
+      const blob = await response.blob();
+      const extension = blob.type.includes('webm') ? 'webm' : 'mp4';
+      const filename = `apex-lab-${drill.id}-${draft.startedAt.replace(/[:.]/g, '-')}.${extension}`;
+      const result = await shareOrDownloadVideo(blob, filename);
+      if (result === 'shared' || result === 'downloaded') {
+        setLocalVideoStatus('saved');
+        setLocalVideoMessage(result === 'shared' ? 'Video shared to your device.' : 'Video downloaded to your device.');
+      } else if (result === 'cancelled') {
+        setLocalVideoStatus('idle');
+        setLocalVideoMessage(null);
+      } else {
+        setLocalVideoStatus('error');
+        setLocalVideoMessage('Your browser does not support saving video to this device.');
+      }
+    } catch (error) {
+      setLocalVideoStatus('error');
+      setLocalVideoMessage(error instanceof Error ? error.message : 'Could not save the video.');
+    }
+  }
 
   async function saveRecordedSession() {
     if (saveStatus === 'saved') {
@@ -660,16 +687,10 @@ function SessionSummaryScreen({
     }
     try {
       setSaveStatus('saving');
-      setSaveMessage(saveVideo ? 'Saving session and video...' : 'Saving session...');
-      const result = await saveSessionDraft(saveVideo ? draft : { ...draft, videoUri: undefined, videoSaved: false }, notes);
+      setSaveMessage('Saving session...');
+      const result = await saveSessionDraft(draft, notes, localVideoStatus === 'saved');
       setSaveStatus('saved');
-      setSaveMessage(
-        result.videoError
-          ? `Session and laps saved. Video was not uploaded: ${result.videoError}`
-          : result.videoSaved
-            ? 'Session, laps, and video saved.'
-            : 'Session and laps saved without video.'
-      );
+      setSaveMessage(result.videoSaved ? 'Session and laps saved. Video kept on your device.' : 'Session and laps saved.');
     } catch (error) {
       setSaveStatus('error');
       setSaveMessage(error instanceof Error ? error.message : 'Could not save the session.');
@@ -716,20 +737,26 @@ function SessionSummaryScreen({
             },
           })
         ) : (
-          <Text style={styles.bodyText}>{draft ? 'Video was not saved for this run.' : 'Saved · placeholder recording attached to this mock session.'}</Text>
+          <Text style={styles.bodyText}>{draft ? 'Video was not recorded for this run.' : 'Saved · placeholder recording attached to this mock session.'}</Text>
         )}
         {draft?.videoUri && (
           <>
             <View style={styles.videoSaveRow}>
               <View style={styles.videoSaveCopy}>
-                <Text style={styles.cardTitle}>Save video</Text>
+                <Text style={styles.cardTitle}>{localVideoStatus === 'saved' ? 'Saved to your device' : 'This app does not store video'}</Text>
                 <Text style={styles.cardSub}>
                   {draft.videoSizeBytes !== undefined ? formatFileSize(draft.videoSizeBytes) : 'Size unavailable'}
                   {draft.videoDurationSeconds !== undefined ? ` · ${Math.round(draft.videoDurationSeconds)}s` : ''}
                 </Text>
               </View>
-              <Switch value={saveVideo} onValueChange={setSaveVideo} trackColor={{ false: colors.silverMid, true: colors.red }} />
+              <SecondaryButton
+                label={localVideoStatus === 'saving' ? 'Saving...' : localVideoStatus === 'saved' ? 'Saved' : 'Save Video to Device'}
+                onPress={() => void saveVideoToDevice()}
+              />
             </View>
+            {localVideoMessage && (
+              <Text style={[styles.saveMessage, localVideoStatus === 'error' && styles.saveMessageError]}>{localVideoMessage}</Text>
+            )}
             {draft.recordingStopReason === 'maxDuration' && <Text style={styles.cameraTip}>Recording stopped at the 8-minute limit.</Text>}
           </>
         )}
@@ -830,7 +857,7 @@ function SessionDetailScreen({ sessionId, cloudSession, go }: { sessionId: strin
     try {
       setDeleteState('deleting');
       setDeleteError(null);
-      await deleteSavedSession(session.id, session.videoPath);
+      await deleteSavedSession(session.id);
       go({ name: 'sessions' });
     } catch (error) {
       setDeleteState('error');
@@ -849,26 +876,14 @@ function SessionDetailScreen({ sessionId, cloudSession, go }: { sessionId: strin
         ]}
       />
       <Section label="Video">
-        {session.videoUri && Platform.OS === 'web' ? (
-          React.createElement('video', {
-            src: session.videoUri,
-            controls: true,
-            playsInline: true,
-            preload: 'metadata',
-            style: {
-              backgroundColor: colors.black,
-              borderRadius: radius.md,
-              display: 'block',
-              maxHeight: 520,
-              width: '100%',
-            },
-          })
-        ) : (
-          <View style={styles.videoPlaceholder}>
-            <Text style={styles.placeholderTitle}>{session.videoSaved ? 'Video unavailable' : 'No video saved'}</Text>
-            <Text style={styles.placeholderText}>{session.videoSaved ? 'Refresh the Session Log to request a new playback link.' : 'This session does not include a recording.'}</Text>
-          </View>
-        )}
+        <View style={styles.videoPlaceholder}>
+          <Text style={styles.placeholderTitle}>{session.videoSaved ? 'Saved to your device' : 'No video saved'}</Text>
+          <Text style={styles.placeholderText}>
+            {session.videoSaved
+              ? 'This app does not keep a copy — find the recording in your phone’s Photos or Files app.'
+              : 'This session does not include a recording.'}
+          </Text>
+        </View>
       </Section>
       <Section label="Lap Times">
         <LapList laps={session.laps} />
@@ -908,6 +923,48 @@ function SessionDetailScreen({ sessionId, cloudSession, go }: { sessionId: strin
   );
 }
 
+function hasTimedLaps(session: Session) {
+  return session.laps.some((lap) => Number.isFinite(lap.time) && lap.time > 0);
+}
+
+function timedSessionsForContext(sessionData: Session[], context: ProgressContext) {
+  return sessionsForContext(sessionData, context).filter(hasTimedLaps);
+}
+
+function useTrainingSessions() {
+  const [trainingSessions, setTrainingSessions] = useState<Session[] | null>(isSupabaseConfigured ? null : sessions);
+  const [trainingError, setTrainingError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    if (!isSupabaseConfigured) {
+      setTrainingSessions(sessions);
+      setTrainingError(null);
+      return () => {
+        active = false;
+      };
+    }
+    void loadSavedSessions()
+      .then((saved) => {
+        if (active) {
+          setTrainingSessions(saved);
+          setTrainingError(null);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setTrainingSessions([]);
+          setTrainingError(error instanceof Error ? error.message : 'Could not load saved sessions.');
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  return { trainingSessions, trainingError };
+}
+
 function ProgressScreen({
   currentBikeId,
   setCurrentBikeId,
@@ -917,10 +974,12 @@ function ProgressScreen({
   setCurrentBikeId: (id: string) => void;
   go: (route: Route) => void;
 }) {
+  const { trainingSessions, trainingError } = useTrainingSessions();
+  const sessionData = trainingSessions ?? [];
   const contexts = useMemo(() => {
     const seen = new Set<string>();
     const rows: ProgressContext[] = [];
-    for (const session of sessions.filter((item) => item.bikeId === currentBikeId)) {
+    for (const session of sessionData.filter((item) => item.bikeId === currentBikeId && hasTimedLaps(item))) {
       const context = { bikeId: session.bikeId, drillId: session.drillId, setupVariantId: session.setupVariantId };
       const key = contextKey(context);
       if (!seen.has(key)) {
@@ -929,7 +988,7 @@ function ProgressScreen({
       }
     }
     return rows;
-  }, [currentBikeId]);
+  }, [currentBikeId, sessionData]);
 
   return (
     <Page title="Progress" subtitle="Track improvement by drill.">
@@ -943,20 +1002,24 @@ function ProgressScreen({
         </View>
       </Section>
 
-      {contexts.length === 0 ? (
+      {trainingSessions === null && <Text style={styles.dateSummary}>Loading saved sessions...</Text>}
+      {trainingError && <Text style={[styles.saveMessage, styles.saveMessageError]}>{trainingError}</Text>}
+      {trainingSessions !== null && contexts.length === 0 ? (
         <EmptyState title="No progress yet" body="Record a session on this bike to build a trend." />
       ) : (
-        contexts.map((context) => <ProgressCard key={contextKey(context)} context={context} go={go} />)
+        contexts.map((context) => <ProgressCard key={contextKey(context)} context={context} sessionData={sessionData} go={go} />)
       )}
     </Page>
   );
 }
 
 function DrillProgressScreen({ context, go }: { context: ProgressContext; go: (route: Route) => void }) {
+  const { trainingSessions, trainingError } = useTrainingSessions();
+  const sessionData = trainingSessions ?? [];
   const drill = drills.find((item) => item.id === context.drillId) ?? drills[0];
   const bike = bikes.find((item) => item.id === context.bikeId) ?? bikes[0];
   const setup = getSetupName(drill, context.setupVariantId);
-  const contextSessions = sessionsForContext(sessions, context);
+  const contextSessions = timedSessionsForContext(sessionData, context);
   const bestBySession = contextSessions.map(bestLap);
   const totalLaps = contextSessions.reduce((sum, session) => sum + session.laps.length, 0);
   const best = bestBySession.length ? Math.min(...bestBySession) : undefined;
@@ -964,8 +1027,14 @@ function DrillProgressScreen({ context, go }: { context: ProgressContext; go: (r
 
   return (
     <Page title={`${drill.name} Progress`} subtitle={`${bike.name} · ${setup}`}>
+      {trainingSessions === null && <Text style={styles.dateSummary}>Loading saved sessions...</Text>}
+      {trainingError && <Text style={[styles.saveMessage, styles.saveMessageError]}>{trainingError}</Text>}
       <Section label="Lap Time Over Time">
-        <LineChart values={bestBySession} height={150} />
+        {bestBySession.length > 1 ? (
+          <LineChart values={bestBySession} height={150} />
+        ) : (
+          <EmptyState title="Not enough sessions" body="Record another timed session in this setup to build a trend." />
+        )}
       </Section>
       <StatGrid
         items={[
@@ -976,21 +1045,25 @@ function DrillProgressScreen({ context, go }: { context: ProgressContext; go: (r
         ]}
       />
       <Section label="Session History">
-        {contextSessions
-          .slice()
-          .reverse()
-          .map((session) => (
-            <SessionCard key={session.id} session={session} onPress={() => go({ name: 'session', sessionId: session.id })} />
-          ))}
+        {contextSessions.length === 0 ? (
+          <EmptyState title="No timed sessions" body="This timing context does not have completed laps yet." />
+        ) : (
+          contextSessions
+            .slice()
+            .reverse()
+            .map((session) => (
+              <SessionCard key={session.id} session={session} onPress={() => go({ name: 'session', sessionId: session.id, session })} />
+            ))
+        )}
       </Section>
     </Page>
   );
 }
 
-function ProgressCard({ context, go }: { context: ProgressContext; go: (route: Route) => void }) {
+function ProgressCard({ context, sessionData, go }: { context: ProgressContext; sessionData: Session[]; go: (route: Route) => void }) {
   const drill = drills.find((item) => item.id === context.drillId) ?? drills[0];
   const setup = getSetupName(drill, context.setupVariantId);
-  const contextSessions = sessionsForContext(sessions, context);
+  const contextSessions = timedSessionsForContext(sessionData, context);
   const bestBySession = contextSessions.map(bestLap);
   const latest = latestSession(contextSessions);
   const best = bestBySession.length ? Math.min(...bestBySession) : undefined;
@@ -999,7 +1072,11 @@ function ProgressCard({ context, go }: { context: ProgressContext; go: (route: R
     <Pressable style={styles.progressCard} onPress={() => go({ name: 'drillProgress', context })}>
       <Text style={styles.cardTitle}>{drill.name}</Text>
       <Text style={styles.cardSub}>{setup}</Text>
-      <LineChart values={bestBySession} height={112} />
+      {bestBySession.length > 1 ? (
+        <LineChart values={bestBySession} height={112} />
+      ) : (
+        <Text style={styles.cardSub}>Not enough sessions for a trend yet.</Text>
+      )}
       <View style={styles.cardBottomRow}>
         <Text style={styles.metricText}>Best: {formatLap(best)}s</Text>
         <Text style={styles.metricText}>Latest: {latest ? `${formatLap(bestLap(latest))}s` : '--'}</Text>

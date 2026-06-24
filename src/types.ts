@@ -97,9 +97,8 @@ export type Session = {
   drillId: string;
   setupVariantId: string;
   laps: Lap[];
+  /** Whether the rider saved a copy of the video to their own device. The app never stores or re-serves the file. */
   videoSaved: boolean;
-  videoPath?: string;
-  videoUri?: string;
   notes?: string;
   conditions?: string;
 };

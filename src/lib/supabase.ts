@@ -1,6 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
 import type { DetectionEvent, Lap, SessionDraft } from '../types';
-import { MAX_UPLOAD_BYTES } from './recording';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -17,9 +16,7 @@ export type SavedSession = {
   bikeId: string;
   drillId: string;
   setupVariantId: string;
-  videoPath?: string;
   videoSaved: boolean;
-  videoUri?: string;
   notes?: string;
   laps: Lap[];
 };
@@ -30,7 +27,6 @@ type SavedSessionRow = {
   bike_id: string;
   drill_id: string;
   setup_variant_id: string;
-  video_path: string | null;
   video_saved: boolean;
   notes: string | null;
   laps: Array<{
@@ -43,13 +39,7 @@ type SavedSessionRow = {
 export type SaveSessionResult = {
   sessionId: string;
   videoSaved: boolean;
-  videoError?: string;
 };
-
-function getVideoExtension(videoUri: string) {
-  if (videoUri.includes('webm')) return 'webm';
-  return 'mp4';
-}
 
 function createId() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -68,13 +58,7 @@ function getClientId() {
   return next;
 }
 
-async function blobFromUri(videoUri: string) {
-  const response = await fetch(videoUri);
-  if (!response.ok) throw new Error('Could not read the recorded video.');
-  return response.blob();
-}
-
-export async function saveSessionDraft(draft: SessionDraft, notes: string) {
+export async function saveSessionDraft(draft: SessionDraft, notes: string, videoSavedLocally: boolean) {
   if (!supabase) throw new Error('Supabase is not configured.');
   const clientId = getClientId();
 
@@ -92,7 +76,7 @@ export async function saveSessionDraft(draft: SessionDraft, notes: string) {
       drill_id: draft.drillId,
       setup_variant_id: draft.setupVariantId,
       video_path: null,
-      video_saved: false,
+      video_saved: videoSavedLocally,
       notes: notes.trim() || null,
       best_lap: bestLap,
       average_lap: averageLap,
@@ -131,105 +115,39 @@ export async function saveSessionDraft(draft: SessionDraft, notes: string) {
   }
 
   const sessionId = session.id as string;
-  if (!draft.videoUri) return { sessionId, videoSaved: false } satisfies SaveSessionResult;
-
-  let blob: Blob;
-  try {
-    blob = await blobFromUri(draft.videoUri);
-  } catch (error) {
-    return {
-      sessionId,
-      videoSaved: false,
-      videoError: error instanceof Error ? error.message : 'Could not read the recorded video.',
-    } satisfies SaveSessionResult;
-  }
-
-  if (blob.size > MAX_UPLOAD_BYTES) {
-    const sizeMb = (blob.size / (1024 * 1024)).toFixed(1);
-    return {
-      sessionId,
-      videoSaved: false,
-      videoError: `Video is ${sizeMb} MB and exceeds the 45 MB upload limit.`,
-    } satisfies SaveSessionResult;
-  }
-
-  const extension = getVideoExtension(blob.type || draft.videoUri);
-  const videoPath = `anonymous/${clientId}/${draft.startedAt.replace(/[:.]/g, '-')}-${draft.drillId}.${extension}`;
-  const { error: uploadError } = await supabase.storage.from('session-videos').upload(videoPath, blob, {
-    contentType: blob.type || `video/${extension}`,
-    upsert: true,
-  });
-
-  if (uploadError) {
-    return {
-      sessionId,
-      videoSaved: false,
-      videoError: uploadError.message,
-    } satisfies SaveSessionResult;
-  }
-
-  const { error: updateError } = await supabase
-    .from('sessions')
-    .update({ video_path: videoPath, video_saved: true })
-    .eq('id', sessionId)
-    .eq('client_id', clientId)
-    .select('id')
-    .single();
-
-  if (updateError) throw updateError;
-
-  return { sessionId, videoSaved: true } satisfies SaveSessionResult;
+  return { sessionId, videoSaved: videoSavedLocally } satisfies SaveSessionResult;
 }
 
 export async function loadSavedSessions(): Promise<SavedSession[]> {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { data, error } = await supabase
     .from('sessions')
-    .select('id,date,bike_id,drill_id,setup_variant_id,video_path,video_saved,notes,laps(lap_number,time,timestamp_in_video)')
+    .select('id,date,bike_id,drill_id,setup_variant_id,video_saved,notes,laps(lap_number,time,timestamp_in_video)')
     .order('date', { ascending: false });
 
   if (error) throw error;
 
-  return Promise.all(
-    ((data ?? []) as SavedSessionRow[]).map(async (session) => {
-      let videoUri: string | undefined;
-      if (session.video_path) {
-        const { data: signedVideo, error: signedVideoError } = await supabase.storage
-          .from('session-videos')
-          .createSignedUrl(session.video_path, 60 * 60);
-        if (!signedVideoError) videoUri = signedVideo.signedUrl;
-      }
-
-      return {
-        id: session.id,
-        date: session.date,
-        bikeId: session.bike_id,
-        drillId: session.drill_id,
-        setupVariantId: session.setup_variant_id,
-        videoPath: session.video_path ?? undefined,
-        videoSaved: session.video_saved,
-        videoUri,
-        notes: session.notes ?? undefined,
-        laps: session.laps
-          .slice()
-          .sort((a, b) => a.lap_number - b.lap_number)
-          .map((lap) => ({
-            lapNumber: lap.lap_number,
-            time: Number(lap.time),
-            timestampInVideo: lap.timestamp_in_video === null ? undefined : Number(lap.timestamp_in_video),
-          })),
-      };
-    })
-  );
+  return ((data ?? []) as SavedSessionRow[]).map((session) => ({
+    id: session.id,
+    date: session.date,
+    bikeId: session.bike_id,
+    drillId: session.drill_id,
+    setupVariantId: session.setup_variant_id,
+    videoSaved: session.video_saved,
+    notes: session.notes ?? undefined,
+    laps: session.laps
+      .slice()
+      .sort((a, b) => a.lap_number - b.lap_number)
+      .map((lap) => ({
+        lapNumber: lap.lap_number,
+        time: Number(lap.time),
+        timestampInVideo: lap.timestamp_in_video === null ? undefined : Number(lap.timestamp_in_video),
+      })),
+  }));
 }
 
-export async function deleteSavedSession(sessionId: string, videoPath?: string) {
+export async function deleteSavedSession(sessionId: string) {
   if (!supabase) throw new Error('Supabase is not configured.');
-
-  if (videoPath) {
-    const { error: videoError } = await supabase.storage.from('session-videos').remove([videoPath]);
-    if (videoError) throw videoError;
-  }
 
   const { error } = await supabase
     .from('sessions')
