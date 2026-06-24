@@ -12,13 +12,26 @@ type Props = {
 const W = 320;
 const H = 160;
 const coneOrange = '#FF7A00';
+const detailViewBoxes: Record<DiagramKey, string> = {
+  circle: '36 72 492 372',
+  'figure-eight': '36 72 528 284',
+  hairpin: '42 20 532 454',
+  'l-turn': '68 20 548 452',
+};
+const detailAspectRatios: Record<DiagramKey, number> = {
+  circle: 492 / 372,
+  'figure-eight': 528 / 284,
+  hairpin: 532 / 454,
+  'l-turn': 548 / 452,
+};
 
 export function DrillDiagram({ type, compact, variant = 'card' }: Props) {
   const isDetail = variant === 'detail';
+  const viewBox = isDetail ? detailViewBoxes[type] : `0 0 ${W} ${H}`;
   return (
-    <View style={[styles.frame, compact && styles.compact, isDetail && styles.detail]}>
-      <Svg width="100%" height="100%" viewBox={isDetail ? '0 0 640 500' : `0 0 ${W} ${H}`}>
-        {isDetail ? <DetailFrame /> : <Frame />}
+    <View style={[styles.frame, compact && styles.compact, isDetail && styles.detail, isDetail && { aspectRatio: detailAspectRatios[type] }]}>
+      <Svg width="100%" height="100%" viewBox={viewBox}>
+        {!isDetail && <Frame />}
         {!isDetail && type === 'circle' && <CircleDiagram />}
         {!isDetail && type === 'figure-eight' && <FigureEightDiagram />}
         {!isDetail && type === 'hairpin' && <HairpinDiagram />}
@@ -30,10 +43,6 @@ export function DrillDiagram({ type, compact, variant = 'card' }: Props) {
       </Svg>
     </View>
   );
-}
-
-function DetailFrame() {
-  return <Rect x="1" y="1" width="638" height="498" rx="8" fill={colors.silver} stroke={colors.silverMid} strokeWidth="1" />;
 }
 
 function Frame() {
@@ -369,7 +378,9 @@ const styles = StyleSheet.create({
     height: 132,
   },
   detail: {
-    aspectRatio: 1.28,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
     height: undefined,
+    overflow: 'visible',
   },
 });

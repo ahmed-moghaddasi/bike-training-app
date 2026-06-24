@@ -1,3 +1,5 @@
+import { downsampleLuminance } from './frameSampling';
+
 export type MotionDirection = 'left-to-right' | 'right-to-left';
 
 export type MotionDetectorState =
@@ -86,13 +88,13 @@ export class MotionDetector {
 
   /** Adds one known-empty frame to the baseline without running crossing detection. */
   calibrate(frame: ImageData, timestamp = 0): MotionAnalysis {
-    const luminance = this.downsampleLuminance(frame);
+    const luminance = this.sampleFrame(frame);
     this.addCalibrationSample(luminance);
     return this.makeAnalysis(timestamp, 0, 0, false);
   }
 
   analyze(frame: ImageData, timestamp: number): MotionAnalysis {
-    const luminance = this.downsampleLuminance(frame);
+    const luminance = this.sampleFrame(frame);
     if (!this.isCalibrated || !this.baseline) {
       this.addCalibrationSample(luminance);
       return this.makeAnalysis(timestamp, 0, 0, false);
@@ -161,24 +163,8 @@ export class MotionDetector {
     return this.makeAnalysis(timestamp, leftRatio, rightRatio, false);
   }
 
-  private downsampleLuminance(frame: ImageData) {
-    if (frame.width < 1 || frame.height < 1 || frame.data.length < frame.width * frame.height * 4) {
-      throw new Error('MotionDetector requires non-empty RGBA ImageData.');
-    }
-
-    const output = new Float32Array(this.config.sampleWidth * this.config.sampleHeight);
-    for (let y = 0; y < this.config.sampleHeight; y += 1) {
-      const sourceY = Math.min(frame.height - 1, Math.floor(((y + 0.5) * frame.height) / this.config.sampleHeight));
-      for (let x = 0; x < this.config.sampleWidth; x += 1) {
-        const sourceX = Math.min(frame.width - 1, Math.floor(((x + 0.5) * frame.width) / this.config.sampleWidth));
-        const sourceIndex = (sourceY * frame.width + sourceX) * 4;
-        output[y * this.config.sampleWidth + x] =
-          frame.data[sourceIndex] * 0.299 +
-          frame.data[sourceIndex + 1] * 0.587 +
-          frame.data[sourceIndex + 2] * 0.114;
-      }
-    }
-    return output;
+  private sampleFrame(frame: ImageData) {
+    return downsampleLuminance(frame, this.config.sampleWidth, this.config.sampleHeight);
   }
 
   private addCalibrationSample(luminance: Float32Array) {

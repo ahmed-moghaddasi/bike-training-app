@@ -88,6 +88,8 @@ export type SessionDraft = {
   startedAt: string;
   endedAt: string;
   detectionEvents: DetectionEvent[];
+  /** Laps haven't been detected yet — Session Summary should run lapDetector against videoUri. */
+  needsProcessing?: boolean;
 };
 
 export type Session = {

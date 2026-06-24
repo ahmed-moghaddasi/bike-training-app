@@ -25,7 +25,7 @@ import {
   latestSession,
   sessionsForContext,
 } from './src/lib/metrics';
-import { createMotionDetector, type MotionDetector } from './src/lib/motionDetector';
+import { detectLapsFromVideo } from './src/lib/lapDetector';
 import {
   CAMERA_MEDIA_CONSTRAINTS,
   formatFileSize,
@@ -60,13 +60,12 @@ const routeTitles: Record<Route['name'], string> = {
   drillProgress: 'Drill Progress',
 };
 
-const DETECTION_INTERVAL_MS = 50;
 const DETECTION_ZONE_WIDTH_RATIO = 0.18;
 
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
   const [routeHistory, setRouteHistory] = useState<Route[]>([]);
-  const [currentBikeId, setCurrentBikeId] = useState(bikes.find((bike) => bike.isCurrent)?.id ?? bikes[0].id);
+  const [currentBikeId] = useState(bikes.find((bike) => bike.isCurrent)?.id ?? bikes[0].id);
   const currentBike = bikes.find((bike) => bike.id === currentBikeId) ?? bikes[0];
 
   function go(next: Route) {
@@ -111,9 +110,7 @@ export default function App() {
       {route.name === 'summary' && <SessionSummaryScreen drillId={route.drillId} currentBike={currentBike} draft={route.draft} go={go} />}
       {route.name === 'sessions' && <SessionsScreen go={go} />}
       {route.name === 'session' && <SessionDetailScreen sessionId={route.sessionId} cloudSession={route.session} go={go} />}
-      {route.name === 'progress' && (
-        <ProgressScreen currentBikeId={currentBikeId} setCurrentBikeId={setCurrentBikeId} go={go} />
-      )}
+      {route.name === 'progress' && <ProgressScreen currentBikeId={currentBikeId} go={go} />}
       {route.name === 'drillProgress' && <DrillProgressScreen context={route.context} go={go} />}
     </SafeAreaView>
   );
@@ -234,43 +231,32 @@ function WebCameraTimer({
   go: (route: Route) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const detectionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const detectorRef = useRef<MotionDetector>(createMotionDetector());
-  const timerStartAtRef = useRef<number | null>(null);
-  const lastLapAtRef = useRef<number | null>(null);
-  const passesSinceLapRef = useRef(0);
+  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordingStartedAtRef = useRef<string>(new Date().toISOString());
+  const recordingStartPerformanceRef = useRef(0);
   const recordingStopReasonRef = useRef<'user' | 'maxDuration'>('user');
-  const detectionEventsRef = useRef<DetectionEvent[]>([]);
   const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
   const shouldRouteOnStopRef = useRef(false);
 
-  const [cameraState, setCameraState] = useState<'loading' | 'ready' | 'armed' | 'recording' | 'error'>('loading');
+  const [cameraState, setCameraState] = useState<'loading' | 'ready' | 'recording' | 'error'>('loading');
   const [cameraMessage, setCameraMessage] = useState('Requesting camera permission...');
-  const [laps, setLaps] = useState<Lap[]>([]);
-  const [latestOverlay, setLatestOverlay] = useState<string | null>(null);
-  const [isFlashing, setIsFlashing] = useState(false);
-  const [motionScore, setMotionScore] = useState(0);
-
-  const latestLap = laps.at(-1);
-  const best = laps.length ? Math.min(...laps.map((lap) => lap.time)) : undefined;
-
-  function stopDetection() {
-    if (detectionTimerRef.current) {
-      clearInterval(detectionTimerRef.current);
-      detectionTimerRef.current = null;
-    }
-  }
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   function clearMaxDurationTimer() {
     if (maxDurationTimerRef.current) {
       clearTimeout(maxDurationTimerRef.current);
       maxDurationTimerRef.current = null;
+    }
+  }
+
+  function stopElapsedTimer() {
+    if (elapsedTimerRef.current) {
+      clearInterval(elapsedTimerRef.current);
+      elapsedTimerRef.current = null;
     }
   }
 
@@ -295,7 +281,7 @@ function WebCameraTimer({
   }
 
   function cleanupCamera() {
-    stopDetection();
+    stopElapsedTimer();
     clearMaxDurationTimer();
     void releaseWakeLock();
     stopCameraTracks();
@@ -325,97 +311,6 @@ function WebCameraTimer({
     }
   }
 
-  function flashDetection(label: string) {
-    setLatestOverlay(label);
-    setIsFlashing(true);
-    window.setTimeout(() => setIsFlashing(false), 420);
-    window.setTimeout(() => setLatestOverlay(null), 1400);
-  }
-
-  function sampleMotionFrame() {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return undefined;
-
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) return undefined;
-
-    const sampleWidth = 64;
-    const sampleHeight = 120;
-    const sourceWidth = Math.max(64, Math.floor(video.videoWidth * DETECTION_ZONE_WIDTH_RATIO));
-    const sourceX = Math.max(0, Math.floor((video.videoWidth - sourceWidth) / 2));
-    canvas.width = sampleWidth;
-    canvas.height = sampleHeight;
-    context.drawImage(video, sourceX, 0, sourceWidth, video.videoHeight, 0, 0, sampleWidth, sampleHeight);
-    return context.getImageData(0, 0, sampleWidth, sampleHeight);
-  }
-
-  function registerDetection(score: number) {
-    const now = performance.now();
-    const videoTimestamp = recordingStartPerformanceRef.current ? Math.max(0, (now - recordingStartPerformanceRef.current) / 1000) : 0;
-    if (timerStartAtRef.current === null) {
-      timerStartAtRef.current = now;
-      lastLapAtRef.current = now;
-      passesSinceLapRef.current = 0;
-      const event: DetectionEvent = {
-        eventType: 'sessionStart',
-        detectedAt: new Date().toISOString(),
-        videoTimestamp,
-        score,
-      };
-      detectionEventsRef.current = [...detectionEventsRef.current, event];
-      startMediaRecorder(now);
-      flashDetection('Timer Started');
-      return;
-    }
-
-    const detectionsPerLap = Math.max(1, drill.timingRule.detectionsPerLap ?? 1);
-    passesSinceLapRef.current += 1;
-    if (passesSinceLapRef.current < detectionsPerLap) {
-      return;
-    }
-    passesSinceLapRef.current = 0;
-
-    const previousLapAt = lastLapAtRef.current ?? timerStartAtRef.current;
-    const lapTime = (now - previousLapAt) / 1000;
-    const lapNumber = lapsRef.current.length + 1;
-    const lap: Lap = { lapNumber, time: lapTime, timestampInVideo: videoTimestamp };
-    const event: DetectionEvent = {
-      eventType: 'lapDetected',
-      detectedAt: new Date().toISOString(),
-      videoTimestamp,
-      lapNumber,
-      score,
-    };
-    lastLapAtRef.current = now;
-    detectionEventsRef.current = [...detectionEventsRef.current, event];
-    lapsRef.current = [...lapsRef.current, lap];
-    setLaps(lapsRef.current);
-    flashDetection(`Lap ${lapNumber} · ${formatLap(lapTime)}s`);
-  }
-
-  const recordingStartPerformanceRef = useRef(0);
-  const lapsRef = useRef<Lap[]>([]);
-
-  function startDetectionLoop() {
-    detectorRef.current.reset();
-    stopDetection();
-    detectionTimerRef.current = setInterval(() => {
-      const frame = sampleMotionFrame();
-      if (!frame) return;
-      const analysis = detectorRef.current.analyze(frame, performance.now());
-      setMotionScore(analysis.score);
-      if (!analysis.calibrated) {
-        setCameraMessage(`Calibrating timing zone ${Math.round(analysis.calibrationProgress * 100)}%`);
-      } else if (timerStartAtRef.current === null) {
-        setCameraMessage('Armed. Ride through the red timing zone.');
-      }
-      if (analysis.detection) {
-        registerDetection(analysis.score);
-      }
-    }, DETECTION_INTERVAL_MS);
-  }
-
   async function requestWakeLock() {
     const webNavigator = navigator as Navigator & { wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> } };
     if (!webNavigator.wakeLock) return;
@@ -426,12 +321,41 @@ function WebCameraTimer({
     }
   }
 
-  function startMediaRecorder(startedAtPerformance: number) {
+  function buildDraft(reason: 'user' | 'maxDuration', videoBlob?: Blob): SessionDraft {
+    const videoUri = videoBlob && videoBlob.size > 0 ? URL.createObjectURL(videoBlob) : undefined;
+    const videoDurationSeconds = recordingStartPerformanceRef.current
+      ? Math.max(0, (performance.now() - recordingStartPerformanceRef.current) / 1000)
+      : 0;
+    return {
+      drillId: drill.id,
+      setupVariantId: setup.id,
+      bikeId: currentBike.id,
+      laps: [],
+      videoUri,
+      videoSaved: Boolean(videoUri),
+      videoSizeBytes: videoBlob?.size,
+      videoDurationSeconds,
+      recordingStopReason: reason,
+      startedAt: recordingStartedAtRef.current,
+      endedAt: new Date().toISOString(),
+      detectionEvents: [],
+      needsProcessing: Boolean(videoUri),
+    };
+  }
+
+  function startMediaRecorder() {
     recordingStartedAtRef.current = new Date().toISOString();
-    recordingStartPerformanceRef.current = startedAtPerformance;
+    recordingStartPerformanceRef.current = performance.now();
+    chunksRef.current = [];
+    recordingStopReasonRef.current = 'user';
+    setElapsedSeconds(0);
+    elapsedTimerRef.current = setInterval(() => {
+      setElapsedSeconds(Math.floor((performance.now() - recordingStartPerformanceRef.current) / 1000));
+    }, 250);
+
     if (!streamRef.current || !('MediaRecorder' in window)) {
       setCameraState('recording');
-      setCameraMessage('Timer running without video recording support.');
+      setCameraMessage('Recording without video support — laps cannot be detected for this run.');
       return;
     }
 
@@ -445,24 +369,7 @@ function WebCameraTimer({
         clearMaxDurationTimer();
         const blobType = recorder.mimeType || chunksRef.current[0]?.type || 'video/mp4';
         const videoBlob = new Blob(chunksRef.current, { type: blobType });
-        const videoUri = videoBlob.size > 0 ? URL.createObjectURL(videoBlob) : undefined;
-        const videoDurationSeconds = recordingStartPerformanceRef.current
-          ? Math.max(0, (performance.now() - recordingStartPerformanceRef.current) / 1000)
-          : 0;
-        const draft: SessionDraft = {
-          drillId: drill.id,
-          setupVariantId: setup.id,
-          bikeId: currentBike.id,
-          laps: lapsRef.current,
-          videoUri,
-          videoSaved: Boolean(videoUri),
-          videoSizeBytes: videoBlob.size,
-          videoDurationSeconds,
-          recordingStopReason: recordingStopReasonRef.current,
-          startedAt: recordingStartedAtRef.current,
-          endedAt: new Date().toISOString(),
-          detectionEvents: detectionEventsRef.current,
-        };
+        const draft = buildDraft(recordingStopReasonRef.current, videoBlob);
         cleanupCamera();
         recorderRef.current = null;
         if (shouldRouteOnStopRef.current) {
@@ -473,61 +380,33 @@ function WebCameraTimer({
       recorder.start(1000);
       maxDurationTimerRef.current = setTimeout(() => endRecording('maxDuration'), MAX_RECORDING_DURATION_MS);
       setCameraState('recording');
-      setCameraMessage('Recording and timing laps.');
+      setCameraMessage('Recording. Ride your laps, then End Session.');
     } catch (error) {
       recorderRef.current = null;
       setCameraState('recording');
-      setCameraMessage(error instanceof Error ? `Timer running without video: ${error.message}` : 'Timer running without video.');
+      setCameraMessage(error instanceof Error ? `Recording without video: ${error.message}` : 'Recording without video.');
     }
   }
 
-  async function armSession() {
+  async function startRecording() {
     if (!streamRef.current) {
       await startCamera();
       if (!streamRef.current) return;
     }
-
-    try {
-      chunksRef.current = [];
-      lapsRef.current = [];
-      detectionEventsRef.current = [];
-      timerStartAtRef.current = null;
-      lastLapAtRef.current = null;
-      passesSinceLapRef.current = 0;
-      recordingStartedAtRef.current = new Date().toISOString();
-      recordingStartPerformanceRef.current = 0;
-      recordingStopReasonRef.current = 'user';
-      setLaps([]);
-      void requestWakeLock();
-      startDetectionLoop();
-      setCameraState('armed');
-      setCameraMessage('Calibrating. Keep the timing zone clear for a moment.');
-    } catch (error) {
-      setCameraState('error');
-      setCameraMessage(error instanceof Error ? error.message : 'Session could not be armed.');
-    }
+    void requestWakeLock();
+    startMediaRecorder();
   }
 
   function endRecording(reason: 'user' | 'maxDuration' = 'user') {
     recordingStopReasonRef.current = reason;
     shouldRouteOnStopRef.current = true;
-    stopDetection();
+    stopElapsedTimer();
     const recorder = recorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
       recorder.stop();
       return;
     }
-    const draft: SessionDraft = {
-      drillId: drill.id,
-      setupVariantId: setup.id,
-      bikeId: currentBike.id,
-      laps: lapsRef.current,
-      videoSaved: false,
-      recordingStopReason: reason,
-      startedAt: recordingStartedAtRef.current,
-      endedAt: new Date().toISOString(),
-      detectionEvents: detectionEventsRef.current,
-    };
+    const draft = buildDraft(reason);
     cleanupCamera();
     go({ name: 'summary', drillId: drill.id, draft });
   }
@@ -544,14 +423,18 @@ function WebCameraTimer({
     };
   }, []);
 
+  const elapsedLabel = `${Math.floor(elapsedSeconds / 60)
+    .toString()
+    .padStart(2, '0')}:${(elapsedSeconds % 60).toString().padStart(2, '0')}`;
+
   return (
     <Page title="Camera Timer" subtitle={`${drill.name} · ${setup.name}`}>
       <View style={styles.cameraShell}>
         <View style={styles.recRow}>
-          <Text style={styles.recText}>{cameraState === 'recording' ? 'REC' : cameraState === 'armed' ? 'ARMED' : 'Aim + Calibrate'}</Text>
-          <Text style={styles.recText}>Lap {laps.length}</Text>
+          <Text style={styles.recText}>{cameraState === 'recording' ? 'REC' : 'Aim Camera'}</Text>
+          <Text style={styles.recText}>{cameraState === 'recording' ? elapsedLabel : ''}</Text>
         </View>
-        <View style={[styles.cameraView, isFlashing && styles.cameraViewFlash]}>
+        <View style={styles.cameraView}>
           {React.createElement('video', {
             ref: videoRef,
             autoPlay: true,
@@ -566,32 +449,17 @@ function WebCameraTimer({
               width: '100%',
             },
           })}
-          {React.createElement('canvas', {
-            ref: canvasRef,
-            style: { display: 'none' },
-          })}
           <View style={styles.timingZone} />
-          <View style={[styles.timingLine, isFlashing && styles.timingLineFlash]} />
-          {cameraState !== 'ready' && cameraState !== 'armed' && cameraState !== 'recording' && <Text style={styles.cameraOverlay}>{cameraState === 'error' ? 'Camera Error' : 'Loading'}</Text>}
-          {latestOverlay && (
-            <View style={styles.lapFlashOverlay}>
-              <Text style={styles.lapFlashText}>{latestOverlay}</Text>
-            </View>
-          )}
-          {isFlashing && <View style={styles.cameraFlashFrame} />}
+          <View style={styles.timingLine} />
+          {cameraState !== 'ready' && cameraState !== 'recording' && <Text style={styles.cameraOverlay}>{cameraState === 'error' ? 'Camera Error' : 'Loading'}</Text>}
         </View>
         <Text style={styles.cameraTip}>{cameraMessage}</Text>
-        <View style={styles.cameraStats}>
-          <MetricMini label="Latest" value={latestLap ? `${formatLap(latestLap.time)}s` : '--'} />
-          <MetricMini label="Best" value={best ? `${formatLap(best)}s` : '--'} />
-          <MetricMini label="Motion" value={`${motionScore.toFixed(1)}x`} />
-        </View>
       </View>
       {cameraState === 'error' && <SecondaryButton label="Retry Camera" onPress={() => void startCamera()} />}
-      {cameraState === 'armed' || cameraState === 'recording' ? (
+      {cameraState === 'recording' ? (
         <PrimaryButton label="End Session" onPress={() => endRecording('user')} />
       ) : (
-        <PrimaryButton label="Arm Session" onPress={() => void armSession()} />
+        <PrimaryButton label="Start Recording" onPress={() => void startRecording()} />
       )}
     </Page>
   );
@@ -612,22 +480,62 @@ function SessionSummaryScreen({
   const setupId = draft?.setupVariantId ?? drill.defaultSetupVariantId;
   const setup = drill.setupVariants.find((variant) => variant.id === setupId) ?? drill.setupVariants[0];
   const mockLaps: Lap[] = [15.62, 15.1, 14.82, 15.02, 14.94].map((time, index) => ({ lapNumber: index + 1, time }));
-  const summaryLaps = draft?.laps ?? mockLaps;
-  const times = summaryLaps.map((lap) => lap.time);
-  const best = times.length ? Math.min(...times) : undefined;
-  const avg = times.length ? times.reduce((sum, lap) => sum + lap, 0) / times.length : undefined;
-  const spread = times.length ? Math.max(...times) - Math.min(...times) : undefined;
   const [notes, setNotes] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [localVideoStatus, setLocalVideoStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [localVideoMessage, setLocalVideoMessage] = useState<string | null>(null);
+  const [processingStatus, setProcessingStatus] = useState<'idle' | 'processing' | 'done' | 'error'>(
+    draft?.needsProcessing ? 'processing' : 'idle',
+  );
+  const [resolvedLaps, setResolvedLaps] = useState<Lap[]>(draft?.laps ?? []);
+  const [resolvedEvents, setResolvedEvents] = useState<DetectionEvent[]>(draft?.detectionEvents ?? []);
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  const isProcessing = processingStatus === 'processing';
+  const summaryLaps = draft ? resolvedLaps : mockLaps;
+  const times = summaryLaps.map((lap) => lap.time);
+  const best = times.length ? Math.min(...times) : undefined;
+  const avg = times.length ? times.reduce((sum, lap) => sum + lap, 0) / times.length : undefined;
+  const spread = times.length ? Math.max(...times) - Math.min(...times) : undefined;
+  const firstPassTime = resolvedEvents.find((event) => event.eventType === 'sessionStart')?.videoTimestamp;
 
   useEffect(() => {
     return () => {
       if (draft?.videoUri) URL.revokeObjectURL(draft.videoUri);
     };
   }, [draft?.videoUri]);
+
+  useEffect(() => {
+    if (!draft?.needsProcessing || !draft.videoUri) return;
+    let cancelled = false;
+    setProcessingStatus('processing');
+    detectLapsFromVideo(draft.videoUri, {
+      detectionZoneWidthRatio: DETECTION_ZONE_WIDTH_RATIO,
+      detectionsPerLap: drill.timingRule.detectionsPerLap ?? 1,
+      recordingStartedAt: draft.startedAt,
+    })
+      .then((result) => {
+        if (cancelled) return;
+        setResolvedLaps(result.laps);
+        setResolvedEvents(result.detectionEvents);
+        setProcessingStatus('done');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setProcessingStatus('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft?.videoUri]);
+
+  useEffect(() => {
+    if (processingStatus === 'done' && firstPassTime !== undefined && previewVideoRef.current) {
+      previewVideoRef.current.currentTime = Math.max(0, firstPassTime - 5);
+    }
+  }, [processingStatus, firstPassTime]);
 
   async function saveVideoToDevice() {
     if (!draft?.videoUri) return;
@@ -664,6 +572,7 @@ function SessionSummaryScreen({
       go({ name: 'sessions' });
       return;
     }
+    if (isProcessing) return;
     if (!isSupabaseConfigured) {
       setSaveStatus('error');
       setSaveMessage('Supabase is not configured for this build.');
@@ -672,7 +581,11 @@ function SessionSummaryScreen({
     try {
       setSaveStatus('saving');
       setSaveMessage('Saving session...');
-      const result = await saveSessionDraft(draft, notes, localVideoStatus === 'saved');
+      const result = await saveSessionDraft(
+        { ...draft, laps: resolvedLaps, detectionEvents: resolvedEvents },
+        notes,
+        localVideoStatus === 'saved',
+      );
       setSaveStatus('saved');
       setSaveMessage(result.videoSaved ? 'Session and laps saved. Video kept on your device.' : 'Session and laps saved.');
     } catch (error) {
@@ -685,31 +598,47 @@ function SessionSummaryScreen({
     <Page title="Session Complete" subtitle={`${drill.name} · ${setup.name} · ${currentBike.name}`}>
       <View style={styles.resultHero}>
         <Text style={styles.resultLabel}>{draft ? 'Recorded Session' : 'New Best'}</Text>
-        <Text style={styles.resultValue}>{best ? `${formatLap(best)}s` : '--'}</Text>
-        <Text style={styles.resultSub}>{summaryLaps.length ? `${summaryLaps.length} timed lap${summaryLaps.length === 1 ? '' : 's'}` : 'Timer started, but no complete laps were detected.'}</Text>
+        <Text style={styles.resultValue}>{isProcessing ? '--' : best ? `${formatLap(best)}s` : '--'}</Text>
+        <Text style={styles.resultSub}>
+          {isProcessing
+            ? 'Finding your laps...'
+            : summaryLaps.length
+              ? `${summaryLaps.length} timed lap${summaryLaps.length === 1 ? '' : 's'}`
+              : 'No complete laps were detected for this run.'}
+        </Text>
       </View>
 
-      {summaryLaps.length > 0 && (
+      {(isProcessing || summaryLaps.length > 0) && (
         <Section label="Lap Flow">
-          <LineChart values={times} height={130} />
+          {isProcessing ? <Text style={styles.bodyText}>Analyzing the recording for laps...</Text> : <LineChart values={times} height={130} />}
         </Section>
       )}
 
       <StatGrid
         items={[
-          ['Average', avg ? `${formatLap(avg)}s` : '--'],
-          ['Laps', String(summaryLaps.length)],
-          ['Spread', spread ? `${formatLap(spread)}s` : '--'],
+          ['Average', isProcessing ? '...' : avg ? `${formatLap(avg)}s` : '--'],
+          ['Laps', isProcessing ? '...' : String(summaryLaps.length)],
+          ['Spread', isProcessing ? '...' : spread ? `${formatLap(spread)}s` : '--'],
         ]}
       />
 
       <Section label="Lap Times">
-        {summaryLaps.length ? <LapList laps={summaryLaps} /> : <EmptyState title="No laps yet" body="Try another pass through the timing line after the timer starts." />}
+        {isProcessing ? (
+          <Text style={styles.bodyText}>Finding your laps...</Text>
+        ) : summaryLaps.length ? (
+          <LapList laps={summaryLaps} />
+        ) : (
+          <EmptyState title="No laps yet" body="Try another pass through the timing line after the timer starts." />
+        )}
       </Section>
 
       <Section label="Video">
+        {processingStatus === 'error' && (
+          <Text style={[styles.bodyText, styles.saveMessageError]}>Could not analyze this recording for laps. The video is still available below.</Text>
+        )}
         {draft?.videoUri && Platform.OS === 'web' ? (
           React.createElement('video', {
+            ref: previewVideoRef,
             src: draft.videoUri,
             controls: true,
             playsInline: true,
@@ -759,7 +688,10 @@ function SessionSummaryScreen({
 
       {saveMessage && <Text style={[styles.saveMessage, saveStatus === 'error' && styles.saveMessageError]}>{saveMessage}</Text>}
 
-      <PrimaryButton label={saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'View Sessions' : 'Save Session'} onPress={() => void saveRecordedSession()} />
+      <PrimaryButton
+        label={isProcessing ? 'Finding laps...' : saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'View Sessions' : 'Save Session'}
+        onPress={() => void saveRecordedSession()}
+      />
       <Pressable style={styles.discardButton} onPress={() => go({ name: 'drill', drillId })}>
         <Text style={styles.discardText}>Discard</Text>
       </Pressable>
@@ -951,11 +883,9 @@ function useTrainingSessions() {
 
 function ProgressScreen({
   currentBikeId,
-  setCurrentBikeId,
   go,
 }: {
   currentBikeId: string;
-  setCurrentBikeId: (id: string) => void;
   go: (route: Route) => void;
 }) {
   const { trainingSessions, trainingError } = useTrainingSessions();
@@ -976,16 +906,6 @@ function ProgressScreen({
 
   return (
     <Page title="Progress" subtitle="Track improvement by drill.">
-      <Section label="Bike">
-        <View style={styles.bikeChips}>
-          {bikes.map((bike) => (
-            <Pressable key={bike.id} onPress={() => setCurrentBikeId(bike.id)} style={[styles.chip, currentBikeId === bike.id && styles.chipActive]}>
-              <Text style={[styles.chipText, currentBikeId === bike.id && styles.chipTextActive]}>{bike.name}</Text>
-            </Pressable>
-          ))}
-        </View>
-      </Section>
-
       {trainingSessions === null && <Text style={styles.dateSummary}>Loading saved sessions...</Text>}
       {trainingError && <Text style={[styles.saveMessage, styles.saveMessageError]}>{trainingError}</Text>}
       {trainingSessions !== null && contexts.length === 0 ? (
@@ -1275,35 +1195,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   drillSetupDiagram: {
-    marginHorizontal: -12,
-  },
-  bikeChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 12,
-  },
-  chip: {
-    borderColor: colors.silverMid,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-  },
-  chipActive: {
-    backgroundColor: colors.red,
-    borderColor: colors.red,
-  },
-  chipText: {
-    color: colors.charcoal,
-    fontFamily: fonts.display,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
-  chipTextActive: {
-    color: colors.white,
+    marginHorizontal: -16,
   },
   primaryButton: {
     alignItems: 'center',
@@ -1565,10 +1457,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
   },
-  cameraViewFlash: {
-    borderColor: colors.red,
-    borderWidth: 3,
-  },
   timingLine: {
     backgroundColor: colors.red,
     bottom: 0,
@@ -1590,13 +1478,6 @@ const styles = StyleSheet.create({
     top: 0,
     width: '18%',
   },
-  timingLineFlash: {
-    backgroundColor: colors.white,
-    shadowColor: colors.red,
-    shadowOpacity: 0.8,
-    shadowRadius: 12,
-    width: 8,
-  },
   cameraOverlay: {
     color: colors.white,
     fontFamily: fonts.display,
@@ -1607,46 +1488,11 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     top: 22,
   },
-  lapFlashOverlay: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(230, 51, 42, 0.86)',
-    bottom: 0,
-    justifyContent: 'center',
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-  },
-  lapFlashText: {
-    color: colors.white,
-    fontFamily: fonts.display,
-    fontSize: 30,
-    fontWeight: '800',
-    textAlign: 'center',
-    textTransform: 'uppercase',
-  },
-  cameraFlashFrame: {
-    borderColor: colors.red,
-    borderRadius: radius.sm,
-    borderWidth: 6,
-    bottom: 0,
-    left: 0,
-    opacity: 0.45,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-  },
   cameraTip: {
     color: colors.silverMid,
     fontFamily: fonts.body,
     fontSize: 13,
     lineHeight: 20,
-    marginTop: 12,
-  },
-  cameraStats: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
     marginTop: 12,
   },
   videoSaveRow: {
