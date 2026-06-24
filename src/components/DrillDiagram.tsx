@@ -1,4 +1,4 @@
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import Svg, { Circle, G, Line, Path, Polygon, Rect, Text as SvgText } from 'react-native-svg';
 import { colors, fonts } from '../theme';
 import type { DiagramKey } from '../types';
@@ -13,13 +13,13 @@ const W = 320;
 const H = 160;
 const coneOrange = '#FF7A00';
 const detailViewBoxes: Record<DiagramKey, string> = {
-  circle: '36 72 492 372',
+  circle: '92 54 444 390',
   'figure-eight': '36 72 528 284',
   hairpin: '42 20 532 454',
   'l-turn': '68 20 548 452',
 };
 const detailAspectRatios: Record<DiagramKey, number> = {
-  circle: 492 / 372,
+  circle: 444 / 390,
   'figure-eight': 528 / 284,
   hairpin: 532 / 454,
   'l-turn': 548 / 452,
@@ -28,8 +28,11 @@ const detailAspectRatios: Record<DiagramKey, number> = {
 export function DrillDiagram({ type, compact, variant = 'card' }: Props) {
   const isDetail = variant === 'detail';
   const viewBox = isDetail ? detailViewBoxes[type] : `0 0 ${W} ${H}`;
+  const { width: windowWidth } = useWindowDimensions();
+  const detailWidth = Math.max(320, windowWidth - 4);
+  const detailHeight = detailWidth / detailAspectRatios[type];
   return (
-    <View style={[styles.frame, compact && styles.compact, isDetail && styles.detail, isDetail && { aspectRatio: detailAspectRatios[type] }]}>
+    <View style={[styles.frame, compact && styles.compact, isDetail && styles.detail, isDetail && { height: detailHeight }]}>
       <Svg width="100%" height="100%" viewBox={viewBox}>
         {!isDetail && <Frame />}
         {!isDetail && type === 'circle' && <CircleDiagram />}
@@ -231,6 +234,10 @@ function DimensionLabel({
   );
 }
 
+function DiagramBounds({ x, y, width, height }: { x: number; y: number; width: number; height: number }) {
+  return <Rect x={x} y={y} width={width} height={height} rx="6" fill="none" stroke={colors.silverDark} strokeDasharray="6 8" strokeWidth="1.5" />;
+}
+
 function CameraMarker({ transform }: { transform: string }) {
   return (
     <G transform={transform}>
@@ -246,13 +253,14 @@ function CircleDetailDiagram() {
   const arrows = [[241, 101, -45], [399, 101, 45], [399, 259, 135], [241, 259, -135]];
   return (
     <G>
+      <DiagramBounds x={106} y={56} width={416} height={378} />
       <Circle cx="320" cy="180" r="112" fill="none" stroke={colors.charcoal} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="2 12" />
       {cones.map(([x, y]) => <DetailCone key={`${x}-${y}`} x={x} y={y} />)}
       {arrows.map(([x, y, rotation]) => <DetailArrow key={`${x}-${y}`} x={x} y={y} rotation={rotation} />)}
       <DimensionGuide x1={320} y1={88} x2={150} y2={88} />
       <DimensionGuide x1={320} y1={272} x2={150} y2={272} />
       <DimensionMeasure d="M150 88 V272 M140 88 H160 M140 272 H160" />
-      <DimensionLabel x={52} y={185} rotation={-90}>8m dia.</DimensionLabel>
+      <DimensionLabel x={150} y={185} rotation={-90}>8m dia.</DimensionLabel>
       <DimensionGuide x1={320} y1={272} x2={470} y2={272} />
       <DimensionGuide x1={320} y1={410} x2={470} y2={410} />
       <DimensionMeasure d="M470 272 V410 M460 272 H480 M460 410 H480" />
