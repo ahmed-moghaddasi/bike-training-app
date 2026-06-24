@@ -1,6 +1,5 @@
 export const TARGET_VIDEO_BITS_PER_SECOND = 600_000;
 export const MAX_RECORDING_DURATION_MS = 8 * 60 * 1_000;
-export const MAX_UPLOAD_BYTES = 45 * 1_024 * 1_024;
 
 export const CAMERA_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
@@ -67,34 +66,3 @@ export function formatFileSize(bytes: number): string {
   return `${value.toFixed(precision)} ${units[unitIndex]}`;
 }
 
-export type RecordingBlobValidation = {
-  isValid: boolean;
-  sizeBytes: number;
-  maxSizeBytes: number;
-  formattedSize: string;
-  formattedMaxSize: string;
-  error?: string;
-};
-
-export function validateRecordingBlob(
-  blob: Blob,
-  maxSizeBytes = MAX_UPLOAD_BYTES,
-): RecordingBlobValidation {
-  const isValid = blob.size > 0 && blob.size <= maxSizeBytes;
-
-  return {
-    isValid,
-    sizeBytes: blob.size,
-    maxSizeBytes,
-    formattedSize: formatFileSize(blob.size),
-    formattedMaxSize: formatFileSize(maxSizeBytes),
-    ...(!isValid
-      ? {
-          error:
-            blob.size === 0
-              ? "The recording is empty."
-              : `The recording is ${formatFileSize(blob.size)}, exceeding the ${formatFileSize(maxSizeBytes)} upload limit.`,
-        }
-      : {}),
-  };
-}

@@ -31,7 +31,6 @@ import {
   formatFileSize,
   getMediaRecorderOptions,
   MAX_RECORDING_DURATION_MS,
-  validateRecordingBlob,
 } from './src/lib/recording';
 import { shareOrDownloadVideo } from './src/lib/localVideo';
 import { deleteSavedSession, isSupabaseConfigured, loadSavedSessions, saveSessionDraft } from './src/lib/supabase';
@@ -168,23 +167,9 @@ function DrillDetailScreen({ drillId, go }: { drillId: string; go: (route: Route
       </Section>
 
       <Section label="Setup">
-        <DrillDiagram type={drill.diagramKey} variant="detail" />
-        <StatGrid
-          items={[
-            ['Variant', setup.name],
-            ['Cones', String(setup.coneCount)],
-          ]}
-        />
-        <BulletList items={setup.measurements} />
-      </Section>
-
-      <Section label="Cone Placement">
-        <NumberedList items={drill.conePlacementSteps} />
-      </Section>
-
-      <Section label="Camera Placement">
-        <Text style={styles.bodyText}>{drill.cameraPlacement.positionDescription}</Text>
-        <BulletList items={[...drill.cameraPlacement.whatCameraShouldSee, `Timing: ${drill.cameraPlacement.timingPoint}`, `Lap rule: ${drill.timingRule.lapRule}`]} />
+        <View style={styles.drillSetupDiagram}>
+          <DrillDiagram type={drill.diagramKey} variant="detail" />
+        </View>
       </Section>
 
       <Section label="How To Ride It">
@@ -460,7 +445,6 @@ function WebCameraTimer({
         clearMaxDurationTimer();
         const blobType = recorder.mimeType || chunksRef.current[0]?.type || 'video/mp4';
         const videoBlob = new Blob(chunksRef.current, { type: blobType });
-        const validation = validateRecordingBlob(videoBlob);
         const videoUri = videoBlob.size > 0 ? URL.createObjectURL(videoBlob) : undefined;
         const videoDurationSeconds = recordingStartPerformanceRef.current
           ? Math.max(0, (performance.now() - recordingStartPerformanceRef.current) / 1000)
@@ -472,7 +456,7 @@ function WebCameraTimer({
           laps: lapsRef.current,
           videoUri,
           videoSaved: Boolean(videoUri),
-          videoSizeBytes: validation.sizeBytes,
+          videoSizeBytes: videoBlob.size,
           videoDurationSeconds,
           recordingStopReason: recordingStopReasonRef.current,
           startedAt: recordingStartedAtRef.current,
@@ -1289,6 +1273,9 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     paddingBottom: 8,
     textTransform: 'uppercase',
+  },
+  drillSetupDiagram: {
+    marginHorizontal: -12,
   },
   bikeChips: {
     flexDirection: 'row',
