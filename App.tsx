@@ -9,6 +9,7 @@ import {
   Text,
   TextInput,
   View,
+  type ViewStyle,
 } from 'react-native';
 import { DrillDiagram } from './src/components/DrillDiagram';
 import { LineChart } from './src/components/LineChart';
@@ -26,6 +27,7 @@ import {
   sessionsForContext,
 } from './src/lib/metrics';
 import { detectLapsFromVideo, type LapDetectionDiagnostics } from './src/lib/lapDetector';
+import { getDetectionConfigForDrill } from './src/lib/detection';
 import {
   CAMERA_MEDIA_CONSTRAINTS,
   formatFileSize,
@@ -69,7 +71,6 @@ const routeTitles: Record<Route['name'], string> = {
   drillProgress: 'Drill Progress',
 };
 
-const DETECTION_ZONE_WIDTH_RATIO = 0.18;
 
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
@@ -253,6 +254,13 @@ function WebCameraTimer({
   currentBike: Bike;
   go: (route: Route) => void;
 }) {
+  const detection = getDetectionConfigForDrill(drill.id);
+  const zoneOffsetPercent = `${(50 - detection.zoneWidthRatio * 50).toFixed(2)}%` as `${number}%`;
+  const zoneSizePercent = `${(detection.zoneWidthRatio * 100).toFixed(2)}%` as `${number}%`;
+  const zoneSizeStyle: ViewStyle =
+    detection.orientation === 'vertical'
+      ? { left: zoneOffsetPercent, width: zoneSizePercent }
+      : { top: zoneOffsetPercent, height: zoneSizePercent };
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -472,8 +480,8 @@ function WebCameraTimer({
               width: '100%',
             },
           })}
-          <View style={styles.timingZone} />
-          <View style={styles.timingLine} />
+          <View style={[detection.orientation === 'vertical' ? styles.timingZone : styles.timingZoneHorizontal, zoneSizeStyle]} />
+          <View style={detection.orientation === 'vertical' ? styles.timingLine : styles.timingLineHorizontal} />
           {cameraState !== 'ready' && cameraState !== 'recording' && <Text style={styles.cameraOverlay}>{cameraState === 'error' ? 'Camera Error' : 'Loading'}</Text>}
         </View>
         <Text style={styles.cameraTip}>{cameraMessage}</Text>
@@ -537,7 +545,7 @@ function SessionSummaryScreen({
     let cancelled = false;
     setProcessingStatus('processing');
     detectLapsFromVideo(draft.videoUri, {
-      detectionZoneWidthRatio: DETECTION_ZONE_WIDTH_RATIO,
+      detection: getDetectionConfigForDrill(drill.id),
       detectionsPerLap: drill.timingRule.detectionsPerLap ?? 1,
       recordingStartedAt: draft.startedAt,
     })
@@ -736,7 +744,7 @@ function SessionSummaryScreen({
               <View style={styles.videoSaveCopy}>
                 <Text style={styles.cardTitle}>Debug Data</Text>
                 <Text style={styles.cardSub}>
-                  {diagnostics.frameCount} frames · max ratio L {diagnostics.maxLeftRatio.toFixed(3)} / R {diagnostics.maxRightRatio.toFixed(3)} (threshold {diagnostics.config.changedRatioThreshold})
+                  {diagnostics.frameCount} frames · max ratio {diagnostics.maxPrimaryRatio.toFixed(3)} / {diagnostics.maxSecondaryRatio.toFixed(3)} (threshold {diagnostics.config.changedRatioThreshold})
                 </Text>
               </View>
               <SecondaryButton label="Export Debug Data" onPress={downloadDebugReport} />
@@ -1562,6 +1570,27 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     width: '18%',
+  },
+  timingLineHorizontal: {
+    backgroundColor: colors.red,
+    left: 0,
+    opacity: 0.95,
+    position: 'absolute',
+    right: 0,
+    top: '50%',
+    height: 5,
+  },
+  timingZoneHorizontal: {
+    backgroundColor: 'rgba(230, 51, 42, 0.12)',
+    borderTopColor: 'rgba(255, 255, 255, 0.7)',
+    borderTopWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.7)',
+    borderBottomWidth: 1,
+    left: 0,
+    right: 0,
+    position: 'absolute',
+    top: '41%',
+    height: '18%',
   },
   cameraOverlay: {
     color: colors.white,
