@@ -156,3 +156,30 @@ export async function deleteSavedSession(sessionId: string) {
 
   if (error) throw error;
 }
+
+/**
+ * Dev-only: uploads lapDetector diagnostics so they can be queried directly
+ * instead of pasted by hand after every test recording. Best-effort — a failed
+ * upload should never block saving the actual session.
+ */
+export async function uploadDebugReport(report: { drillId: string; startedAt: string; payload: unknown }): Promise<{ ok: boolean; error?: string }> {
+  if (!supabase) return { ok: false, error: 'Supabase is not configured for this build.' };
+  try {
+    const { error } = await supabase.from('debug_reports').insert({
+      client_id: getClientId(),
+      drill_id: report.drillId,
+      started_at: report.startedAt,
+      payload: report.payload,
+    });
+    if (error) {
+      const message = [error.message, error.details, error.hint].filter(Boolean).join(' | ');
+      console.warn('Could not upload debug report:', message);
+      return { ok: false, error: message };
+    }
+    return { ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error uploading debug report.';
+    console.warn('Could not upload debug report:', message);
+    return { ok: false, error: message };
+  }
+}

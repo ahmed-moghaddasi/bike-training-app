@@ -12,6 +12,38 @@ export type LapDetectionConfig = {
 export type LapDetectionResult = {
   laps: Lap[];
   detectionEvents: DetectionEvent[];
+  diagnostics: LapDetectionDiagnostics;
+};
+
+export type CandidateOutcome = 'confirmed' | 'sequence-timeout' | 'decay-failed';
+
+export type CandidateLog = {
+  /** Seconds into the clip where the candidate strip first activated. */
+  startTimeSeconds: number;
+  strip: 'left' | 'right';
+  outcome: CandidateOutcome;
+  /** Seconds into the clip where the opposite strip confirmed, if it did. */
+  confirmedAtSeconds?: number;
+};
+
+export type LapDetectionDiagnostics = {
+  frameCount: number;
+  clipDurationSeconds: number;
+  /** The strongest left/right changed-pixel ratio seen anywhere in the clip — compare against changedRatioThreshold. */
+  maxLeftRatio: number;
+  maxRightRatio: number;
+  config: {
+    pixelDeltaThreshold: number;
+    changedRatioThreshold: number;
+    minActiveMs: number;
+    cooldownMs: number;
+    sequenceTimeoutMs: number;
+    decayWindowMs: number;
+  };
+  /** Every candidate sequence the detector noticed, and why it was kept or dropped. */
+  candidates: CandidateLog[];
+  /** Full per-frame signal, downsampled to at most ~500 points so the export stays small. */
+  series: Array<{ timeSeconds: number; leftRatio: number; rightRatio: number }>;
 };
 
 const SAMPLE_WIDTH = 64;
@@ -42,6 +74,16 @@ type VideoWithFrameCallback = HTMLVideoElement & {
  * event — something a live, causal detector structurally cannot do.
  */
 export async function detectLapsFromVideo(videoUri: string, config: LapDetectionConfig): Promise<LapDetectionResult> {
+  const emptyDiagnostics: LapDetectionDiagnostics = {
+    frameCount: 0,
+    clipDurationSeconds: 0,
+    maxLeftRatio: 0,
+    maxRightRatio: 0,
+    config: detectorConfigSnapshot(),
+    candidates: [],
+    series: [],
+  };
+
   const frames = await extractFrames(videoUri, {
     zoneWidthRatio: config.detectionZoneWidthRatio,
     sampleWidth: SAMPLE_WIDTH,
@@ -49,12 +91,55 @@ export async function detectLapsFromVideo(videoUri: string, config: LapDetection
     playbackRate: PLAYBACK_RATE,
   });
 
-  if (frames.length === 0) return { laps: [], detectionEvents: [] };
+  if (frames.length === 0) return { laps: [], detectionEvents: [], diagnostics: emptyDiagnostics };
 
   const baseline = computeModeBaseline(frames.map((frame) => frame.grid), SAMPLE_WIDTH * SAMPLE_HEIGHT);
   const series = computeChangedRatioSeries(frames, baseline);
-  const crossings = detectCrossings(series);
-  return reduceCrossingsToLaps(crossings, Math.max(1, config.detectionsPerLap), config.recordingStartedAt);
+  const { crossings, candidates } = detectCrossings(series);
+  const result = reduceCrossingsToLaps(crossings, Math.max(1, config.detectionsPerLap), config.recordingStartedAt);
+
+  const diagnostics: LapDetectionDiagnostics = {
+    frameCount: frames.length,
+    clipDurationSeconds: series.length ? series[series.length - 1].time / 1000 : 0,
+    maxLeftRatio: series.reduce((max, sample) => Math.max(max, sample.leftRatio), 0),
+    maxRightRatio: series.reduce((max, sample) => Math.max(max, sample.rightRatio), 0),
+    config: detectorConfigSnapshot(),
+    candidates: candidates.map((candidate) => ({
+      startTimeSeconds: candidate.startTime / 1000,
+      strip: candidate.strip,
+      outcome: candidate.outcome,
+      confirmedAtSeconds: candidate.confirmedAt !== undefined ? candidate.confirmedAt / 1000 : undefined,
+    })),
+    series: downsampleSeriesForExport(series).map((sample) => ({
+      timeSeconds: sample.time / 1000,
+      leftRatio: sample.leftRatio,
+      rightRatio: sample.rightRatio,
+    })),
+  };
+
+  return { ...result, diagnostics };
+}
+
+function detectorConfigSnapshot() {
+  return {
+    pixelDeltaThreshold: PIXEL_DELTA_THRESHOLD,
+    changedRatioThreshold: CHANGED_RATIO_THRESHOLD,
+    minActiveMs: MIN_ACTIVE_MS,
+    cooldownMs: COOLDOWN_MS,
+    sequenceTimeoutMs: SEQUENCE_TIMEOUT_MS,
+    decayWindowMs: DECAY_WINDOW_MS,
+  };
+}
+
+/** Keeps the exported debug file readable/small even for an 8-minute clip. */
+function downsampleSeriesForExport(series: RatioSample[], maxPoints = 500): RatioSample[] {
+  if (series.length <= maxPoints) return series;
+  const step = series.length / maxPoints;
+  const sampled: RatioSample[] = [];
+  for (let i = 0; i < maxPoints; i += 1) {
+    sampled.push(series[Math.floor(i * step)]);
+  }
+  return sampled;
 }
 
 function extractFrames(
@@ -177,9 +262,17 @@ function computeChangedRatioSeries(frames: CapturedFrame[], baseline: Float32Arr
   });
 }
 
+type RawCandidate = {
+  strip: 'left' | 'right';
+  startTime: number;
+  outcome: CandidateOutcome;
+  confirmedAt?: number;
+};
+
 /** Asymmetric left/right crossing sequence, same idea as the old live detector, evaluated over the whole series. */
-function detectCrossings(series: RatioSample[]): Crossing[] {
+function detectCrossings(series: RatioSample[]): { crossings: Crossing[]; candidates: RawCandidate[] } {
   const crossings: Crossing[] = [];
+  const candidates: RawCandidate[] = [];
   let leftActiveSince: number | null = null;
   let rightActiveSince: number | null = null;
   let pendingStrip: 'left' | 'right' | null = null;
@@ -195,6 +288,7 @@ function detectCrossings(series: RatioSample[]): Crossing[] {
     rightActiveSince = rightActive ? rightActiveSince ?? time : null;
 
     if (pendingStrip && time - pendingSince > SEQUENCE_TIMEOUT_MS) {
+      candidates.push({ strip: pendingStrip, startTime: pendingSince, outcome: 'sequence-timeout' });
       pendingStrip = null;
     }
 
@@ -218,17 +312,24 @@ function detectCrossings(series: RatioSample[]): Crossing[] {
 
     if (direction && decaysWithinWindow(series, i)) {
       crossings.push({ time, direction, score: Math.max(leftRatio, rightRatio) / CHANGED_RATIO_THRESHOLD });
+      candidates.push({ strip: pendingStrip!, startTime: pendingSince, outcome: 'confirmed', confirmedAt: time });
       lastCrossingAt = time;
       pendingStrip = null;
       leftActiveSince = null;
       rightActiveSince = null;
     } else if (direction) {
       // Confirmed sequence but motion never decayed — likely sustained drift, not a real pass.
+      candidates.push({ strip: pendingStrip!, startTime: pendingSince, outcome: 'decay-failed', confirmedAt: time });
       pendingStrip = null;
     }
   }
 
-  return crossings;
+  // Clip ended mid-sequence — log it rather than silently dropping the candidate.
+  if (pendingStrip) {
+    candidates.push({ strip: pendingStrip, startTime: pendingSince, outcome: 'sequence-timeout' });
+  }
+
+  return { crossings, candidates };
 }
 
 /**
@@ -247,7 +348,11 @@ function decaysWithinWindow(series: RatioSample[], index: number): boolean {
   return true;
 }
 
-function reduceCrossingsToLaps(crossings: Crossing[], detectionsPerLap: number, recordingStartedAt: string): LapDetectionResult {
+function reduceCrossingsToLaps(
+  crossings: Crossing[],
+  detectionsPerLap: number,
+  recordingStartedAt: string,
+): { laps: Lap[]; detectionEvents: DetectionEvent[] } {
   const laps: Lap[] = [];
   const detectionEvents: DetectionEvent[] = [];
   if (crossings.length === 0) return { laps, detectionEvents };

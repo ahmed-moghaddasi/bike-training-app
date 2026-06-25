@@ -25,7 +25,7 @@ import {
   latestSession,
   sessionsForContext,
 } from './src/lib/metrics';
-import { detectLapsFromVideo } from './src/lib/lapDetector';
+import { detectLapsFromVideo, type LapDetectionDiagnostics } from './src/lib/lapDetector';
 import {
   CAMERA_MEDIA_CONSTRAINTS,
   formatFileSize,
@@ -33,7 +33,7 @@ import {
   MAX_RECORDING_DURATION_MS,
 } from './src/lib/recording';
 import { shareOrDownloadVideo } from './src/lib/localVideo';
-import { deleteSavedSession, isSupabaseConfigured, loadSavedSessions, saveSessionDraft } from './src/lib/supabase';
+import { deleteSavedSession, isSupabaseConfigured, loadSavedSessions, saveSessionDraft, uploadDebugReport } from './src/lib/supabase';
 import { colors, fonts, radius, spacing } from './src/theme';
 import type { Bike, DetectionEvent, Drill, Lap, ProgressContext, Session, SessionDraft, SetupVariant } from './src/types';
 
@@ -490,6 +490,9 @@ function SessionSummaryScreen({
   );
   const [resolvedLaps, setResolvedLaps] = useState<Lap[]>(draft?.laps ?? []);
   const [resolvedEvents, setResolvedEvents] = useState<DetectionEvent[]>(draft?.detectionEvents ?? []);
+  const [diagnostics, setDiagnostics] = useState<LapDetectionDiagnostics | null>(null);
+  const [debugUploadStatus, setDebugUploadStatus] = useState<'idle' | 'uploading' | 'uploaded' | 'error'>('idle');
+  const [debugUploadError, setDebugUploadError] = useState<string | null>(null);
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const isProcessing = processingStatus === 'processing';
@@ -519,7 +522,18 @@ function SessionSummaryScreen({
         if (cancelled) return;
         setResolvedLaps(result.laps);
         setResolvedEvents(result.detectionEvents);
+        setDiagnostics(result.diagnostics);
         setProcessingStatus('done');
+        setDebugUploadStatus('uploading');
+        uploadDebugReport({
+          drillId: draft.drillId,
+          startedAt: draft.startedAt,
+          payload: { laps: result.laps, detectionEvents: result.detectionEvents, diagnostics: result.diagnostics },
+        }).then((uploadResult) => {
+          if (cancelled) return;
+          setDebugUploadStatus(uploadResult.ok ? 'uploaded' : 'error');
+          setDebugUploadError(uploadResult.ok ? null : uploadResult.error ?? 'Unknown error.');
+        });
       })
       .catch(() => {
         if (cancelled) return;
@@ -561,6 +575,26 @@ function SessionSummaryScreen({
       setLocalVideoStatus('error');
       setLocalVideoMessage(error instanceof Error ? error.message : 'Could not save the video.');
     }
+  }
+
+  function downloadDebugReport() {
+    if (!diagnostics || !draft) return;
+    const payload = {
+      drillId: draft.drillId,
+      startedAt: draft.startedAt,
+      laps: resolvedLaps,
+      detectionEvents: resolvedEvents,
+      diagnostics,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `apex-lab-debug-${draft.drillId}-${draft.startedAt.replace(/[:.]/g, '-')}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   async function saveRecordedSession() {
@@ -671,6 +705,28 @@ function SessionSummaryScreen({
               <Text style={[styles.saveMessage, localVideoStatus === 'error' && styles.saveMessageError]}>{localVideoMessage}</Text>
             )}
             {draft.recordingStopReason === 'maxDuration' && <Text style={styles.cameraTip}>Recording stopped at the 8-minute limit.</Text>}
+          </>
+        )}
+        {diagnostics && (
+          <>
+            <View style={styles.videoSaveRow}>
+              <View style={styles.videoSaveCopy}>
+                <Text style={styles.cardTitle}>Debug Data</Text>
+                <Text style={styles.cardSub}>
+                  {diagnostics.frameCount} frames · max ratio L {diagnostics.maxLeftRatio.toFixed(3)} / R {diagnostics.maxRightRatio.toFixed(3)} (threshold {diagnostics.config.changedRatioThreshold})
+                </Text>
+              </View>
+              <SecondaryButton label="Export Debug Data" onPress={downloadDebugReport} />
+            </View>
+            <Text style={[styles.saveMessage, debugUploadStatus === 'error' && styles.saveMessageError]}>
+              {debugUploadStatus === 'uploading'
+                ? 'Uploading debug report to Supabase...'
+                : debugUploadStatus === 'uploaded'
+                  ? 'Debug report uploaded to Supabase.'
+                  : debugUploadStatus === 'error'
+                    ? `Debug report upload failed: ${debugUploadError}`
+                    : ''}
+            </Text>
           </>
         )}
       </Section>
