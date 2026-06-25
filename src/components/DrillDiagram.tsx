@@ -34,7 +34,6 @@ export function DrillDiagram({ type, compact, variant = 'card' }: Props) {
   return (
     <View style={[styles.frame, compact && styles.compact, isDetail && styles.detail, isDetail && { height: detailHeight }]}>
       <Svg width="100%" height="100%" viewBox={viewBox}>
-        {!isDetail && <Frame />}
         {!isDetail && type === 'circle' && <CircleDiagram />}
         {!isDetail && type === 'figure-eight' && <FigureEightDiagram />}
         {!isDetail && type === 'hairpin' && <HairpinDiagram />}
@@ -45,12 +44,6 @@ export function DrillDiagram({ type, compact, variant = 'card' }: Props) {
         {isDetail && type === 'l-turn' && <LTurnDetailDiagram />}
       </Svg>
     </View>
-  );
-}
-
-function Frame() {
-  return (
-    <Rect x="1" y="1" width={W - 2} height={H - 2} rx="8" fill={colors.silver} stroke={colors.silverMid} strokeWidth="1" />
   );
 }
 
@@ -383,6 +376,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   compact: {
+    backgroundColor: 'transparent',
+    borderWidth: 0,
     height: 132,
   },
   detail: {
