@@ -1,4 +1,5 @@
 import { downsampleLuminance } from './frameSampling';
+import { computeCropRectRatio } from './detection/geometry';
 import type { CrossingOrientation, DetectionConfig } from './detection/types';
 import type { DetectionEvent, Lap } from '../types';
 
@@ -137,15 +138,12 @@ function extractFrames(videoUri: string, detection: DetectionConfig): Promise<Ca
       canvas.width = detection.sampleWidth;
       canvas.height = detection.sampleHeight;
 
-      if (detection.orientation === 'vertical') {
-        const sourceWidth = Math.max(64, Math.floor(video.videoWidth * detection.zoneWidthRatio));
-        const sourceX = Math.max(0, Math.floor((video.videoWidth - sourceWidth) / 2));
-        context.drawImage(video, sourceX, 0, sourceWidth, video.videoHeight, 0, 0, detection.sampleWidth, detection.sampleHeight);
-      } else {
-        const sourceHeight = Math.max(64, Math.floor(video.videoHeight * detection.zoneWidthRatio));
-        const sourceY = Math.max(0, Math.floor((video.videoHeight - sourceHeight) / 2));
-        context.drawImage(video, 0, sourceY, video.videoWidth, sourceHeight, 0, 0, detection.sampleWidth, detection.sampleHeight);
-      }
+      const ratio = computeCropRectRatio(detection);
+      const sourceWidth = Math.max(64, Math.floor(video.videoWidth * ratio.width));
+      const sourceHeight = Math.max(64, Math.floor(video.videoHeight * ratio.height));
+      const sourceX = Math.max(0, Math.floor(video.videoWidth * ratio.left));
+      const sourceY = Math.max(0, Math.floor(video.videoHeight * ratio.top));
+      context.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, detection.sampleWidth, detection.sampleHeight);
 
       const imageData = context.getImageData(0, 0, detection.sampleWidth, detection.sampleHeight);
       // Stored in ms (video time * 1000) so they compare directly against the *Ms thresholds below.

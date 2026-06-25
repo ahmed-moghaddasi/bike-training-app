@@ -28,6 +28,7 @@ import {
 } from './src/lib/metrics';
 import { detectLapsFromVideo, type LapDetectionDiagnostics } from './src/lib/lapDetector';
 import { getDetectionConfigForDrill } from './src/lib/detection';
+import { computeCropRectRatio } from './src/lib/detection/geometry';
 import {
   CAMERA_MEDIA_CONSTRAINTS,
   formatFileSize,
@@ -255,12 +256,14 @@ function WebCameraTimer({
   go: (route: Route) => void;
 }) {
   const detection = getDetectionConfigForDrill(drill.id);
-  const zoneOffsetPercent = `${(50 - detection.zoneWidthRatio * 50).toFixed(2)}%` as `${number}%`;
-  const zoneSizePercent = `${(detection.zoneWidthRatio * 100).toFixed(2)}%` as `${number}%`;
-  const zoneSizeStyle: ViewStyle =
-    detection.orientation === 'vertical'
-      ? { left: zoneOffsetPercent, width: zoneSizePercent }
-      : { top: zoneOffsetPercent, height: zoneSizePercent };
+  const cropRatio = computeCropRectRatio(detection);
+  const toPercent = (value: number) => `${(value * 100).toFixed(2)}%` as `${number}%`;
+  const zoneBoxStyle: ViewStyle = {
+    left: toPercent(cropRatio.left),
+    top: toPercent(cropRatio.top),
+    width: toPercent(cropRatio.width),
+    height: toPercent(cropRatio.height),
+  };
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -480,8 +483,9 @@ function WebCameraTimer({
               width: '100%',
             },
           })}
-          <View style={[detection.orientation === 'vertical' ? styles.timingZone : styles.timingZoneHorizontal, zoneSizeStyle]} />
-          <View style={detection.orientation === 'vertical' ? styles.timingLine : styles.timingLineHorizontal} />
+          <View style={[styles.timingZoneBox, zoneBoxStyle]}>
+            <View style={detection.orientation === 'vertical' ? styles.timingLineVertical : styles.timingLineHorizontal} />
+          </View>
           {cameraState !== 'ready' && cameraState !== 'recording' && <Text style={styles.cameraOverlay}>{cameraState === 'error' ? 'Camera Error' : 'Loading'}</Text>}
         </View>
         <Text style={styles.cameraTip}>{cameraMessage}</Text>
@@ -1550,7 +1554,13 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
   },
-  timingLine: {
+  timingZoneBox: {
+    backgroundColor: 'rgba(230, 51, 42, 0.12)',
+    borderColor: 'rgba(255, 255, 255, 0.7)',
+    borderWidth: 1,
+    position: 'absolute',
+  },
+  timingLineVertical: {
     backgroundColor: colors.red,
     bottom: 0,
     left: '50%',
@@ -1558,18 +1568,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     width: 5,
-  },
-  timingZone: {
-    backgroundColor: 'rgba(230, 51, 42, 0.12)',
-    borderLeftColor: 'rgba(255, 255, 255, 0.7)',
-    borderLeftWidth: 1,
-    borderRightColor: 'rgba(255, 255, 255, 0.7)',
-    borderRightWidth: 1,
-    bottom: 0,
-    left: '41%',
-    position: 'absolute',
-    top: 0,
-    width: '18%',
   },
   timingLineHorizontal: {
     backgroundColor: colors.red,
@@ -1579,18 +1577,6 @@ const styles = StyleSheet.create({
     right: 0,
     top: '50%',
     height: 5,
-  },
-  timingZoneHorizontal: {
-    backgroundColor: 'rgba(230, 51, 42, 0.12)',
-    borderTopColor: 'rgba(255, 255, 255, 0.7)',
-    borderTopWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.7)',
-    borderBottomWidth: 1,
-    left: 0,
-    right: 0,
-    position: 'absolute',
-    top: '41%',
-    height: '18%',
   },
   cameraOverlay: {
     color: colors.white,

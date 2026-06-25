@@ -8,8 +8,12 @@ export type CrossingOrientation = 'vertical' | 'horizontal';
 
 export type DetectionConfig = {
   orientation: CrossingOrientation;
-  /** Width (vertical orientation) or height (horizontal orientation) of the cropped detection strip, as a ratio of the matching frame dimension. Also drives the on-screen aim overlay. */
+  /** Size of the crop along the crossing axis (width for vertical orientation, height for horizontal), as a ratio of the matching frame dimension. Narrower concentrates analysis right at the line. */
   zoneWidthRatio: number;
+  /** Size of the crop along the OTHER axis (height for vertical orientation, width for horizontal), as a ratio of the matching frame dimension. 1 = full frame (no constraint); narrower excludes background the rider's path never crosses (e.g. sky above a wide circle shot). */
+  bandRatio: number;
+  /** Where the band above is centered along that axis, 0 (top/left edge) to 1 (bottom/right edge). 0.5 = centered. Only matters when bandRatio < 1. */
+  bandCenterRatio: number;
   sampleWidth: number;
   sampleHeight: number;
   /** Luminance delta (0-255) required for a sampled pixel to count as changed. */
@@ -33,6 +37,8 @@ export type DetectionConfig = {
 export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
   orientation: 'vertical',
   zoneWidthRatio: 0.18,
+  bandRatio: 1,
+  bandCenterRatio: 0.5,
   sampleWidth: 64,
   sampleHeight: 120,
   pixelDeltaThreshold: 16,
