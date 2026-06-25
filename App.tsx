@@ -37,16 +37,25 @@ import { deleteSavedSession, isSupabaseConfigured, loadSavedSessions, saveSessio
 import { colors, fonts, radius, spacing } from './src/theme';
 import type { Bike, DetectionEvent, Drill, Lap, ProgressContext, Session, SessionDraft, SetupVariant } from './src/types';
 
-type Route =
+type ReturnRoute =
   | { name: 'home' }
   | { name: 'drills' }
   | { name: 'drill'; drillId: string }
-  | { name: 'camera'; drillId: string }
-  | { name: 'summary'; drillId: string; draft?: SessionDraft }
   | { name: 'sessions' }
   | { name: 'session'; sessionId: string; session?: Session }
   | { name: 'progress' }
   | { name: 'drillProgress'; context: ProgressContext };
+
+type Route =
+  | { name: 'home' }
+  | { name: 'drills' }
+  | { name: 'drill'; drillId: string; returnTo?: ReturnRoute }
+  | { name: 'camera'; drillId: string; returnTo?: ReturnRoute }
+  | { name: 'summary'; drillId: string; draft?: SessionDraft; returnTo?: ReturnRoute }
+  | { name: 'sessions' }
+  | { name: 'session'; sessionId: string; session?: Session; returnTo?: ReturnRoute }
+  | { name: 'progress' }
+  | { name: 'drillProgress'; context: ProgressContext; returnTo?: ReturnRoute };
 
 const routeTitles: Record<Route['name'], string> = {
   home: 'Apex Lab',
@@ -64,22 +73,17 @@ const DETECTION_ZONE_WIDTH_RATIO = 0.18;
 
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
-  const [routeHistory, setRouteHistory] = useState<Route[]>([]);
   const [currentBikeId] = useState(bikes.find((bike) => bike.isCurrent)?.id ?? bikes[0].id);
   const currentBike = bikes.find((bike) => bike.id === currentBikeId) ?? bikes[0];
 
   function go(next: Route) {
-    setRouteHistory((history) => [...history, route]);
     setRoute(next);
   }
 
   function back() {
     if (route.name === 'home') return;
-    setRouteHistory((history) => {
-      const previous = history[history.length - 1] ?? { name: 'home' };
-      setRoute(previous);
-      return history.slice(0, -1);
-    });
+    if ('returnTo' in route && route.returnTo) return setRoute(route.returnTo);
+    setRoute(parentRoute(route));
   }
 
   return (
@@ -98,8 +102,8 @@ export default function App() {
         <HomeScreenV2
           currentBikeId={currentBikeId}
           onOpenDrills={() => go({ name: 'drills' })}
-          onOpenDrill={(id) => go({ name: 'drill', drillId: id })}
-          onOpenSession={(session) => go({ name: 'session', sessionId: session.id, session })}
+          onOpenDrill={(id) => go({ name: 'drill', drillId: id, returnTo: { name: 'home' } })}
+          onOpenSession={(session) => go({ name: 'session', sessionId: session.id, session, returnTo: { name: 'home' } })}
           onOpenSessions={() => go({ name: 'sessions' })}
           onOpenProgress={() => go({ name: 'progress' })}
         />
@@ -114,6 +118,25 @@ export default function App() {
       {route.name === 'drillProgress' && <DrillProgressScreen context={route.context} go={go} />}
     </SafeAreaView>
   );
+}
+
+function parentRoute(route: Route): Route {
+  switch (route.name) {
+    case 'drill':
+      return { name: 'drills' };
+    case 'camera':
+    case 'summary':
+      return { name: 'drill', drillId: route.drillId };
+    case 'session':
+      return { name: 'sessions' };
+    case 'drillProgress':
+      return { name: 'progress' };
+    case 'drills':
+    case 'sessions':
+    case 'progress':
+    default:
+      return { name: 'home' };
+  }
 }
 
 
@@ -132,7 +155,7 @@ function DrillsScreen({ currentBikeId, go }: { currentBikeId: string; go: (route
           const latest = latestSession(contextSessions);
           const best = contextSessions.length ? Math.min(...contextSessions.map(bestLap)) : undefined;
           return (
-            <Pressable key={drill.id} style={styles.drillLibraryCard} onPress={() => go({ name: 'drill', drillId: drill.id })}>
+            <Pressable key={drill.id} style={styles.drillLibraryCard} onPress={() => go({ name: 'drill', drillId: drill.id, returnTo: { name: 'drills' } })}>
               <Text style={styles.drillCardTitle}>{drill.name}</Text>
               <DrillDiagram type={drill.diagramKey} compact />
               <View style={styles.cardBottomRow}>
@@ -193,7 +216,7 @@ function DrillDetailScreen({ drillId, go }: { drillId: string; go: (route: Route
         ))}
       </Section>
 
-      <PrimaryButton label="Start Recording" onPress={() => go({ name: 'camera', drillId })} />
+      <PrimaryButton label="Start Recording" onPress={() => go({ name: 'camera', drillId, returnTo: { name: 'drill', drillId } })} />
     </Page>
   );
 }
@@ -374,7 +397,7 @@ function WebCameraTimer({
         recorderRef.current = null;
         if (shouldRouteOnStopRef.current) {
           shouldRouteOnStopRef.current = false;
-          go({ name: 'summary', drillId: drill.id, draft });
+          go({ name: 'summary', drillId: drill.id, draft, returnTo: { name: 'drill', drillId: drill.id } });
         }
       };
       recorder.start(1000);
@@ -408,7 +431,7 @@ function WebCameraTimer({
     }
     const draft = buildDraft(reason);
     cleanupCamera();
-    go({ name: 'summary', drillId: drill.id, draft });
+    go({ name: 'summary', drillId: drill.id, draft, returnTo: { name: 'drill', drillId: drill.id } });
   }
 
   useEffect(() => {
@@ -805,7 +828,7 @@ function SessionsScreen({ go }: { go: (route: Route) => void }) {
           <Section key={group.date} label={formatDate(group.date)}>
             <Text style={styles.dateSummary}>{group.sessions.length} session{group.sessions.length === 1 ? '' : 's'} · {lapCount} laps</Text>
             {group.sessions.map((session) => (
-              <SessionCard key={session.id} session={session} onPress={() => go({ name: 'session', sessionId: session.id, session })} />
+              <SessionCard key={session.id} session={session} onPress={() => go({ name: 'session', sessionId: session.id, session, returnTo: { name: 'sessions' } })} />
             ))}
           </Section>
         );
@@ -865,10 +888,16 @@ function SessionDetailScreen({ sessionId, cloudSession, go }: { sessionId: strin
         {session.conditions && <Text style={styles.bodyText}>Conditions: {session.conditions}</Text>}
       </Section>
       <View style={styles.twoCol}>
-        <SecondaryButton label="View Drill" onPress={() => go({ name: 'drill', drillId: drill.id })} />
+        <SecondaryButton label="View Drill" onPress={() => go({ name: 'drill', drillId: drill.id, returnTo: { name: 'session', sessionId: session.id, session } })} />
         <SecondaryButton
           label="View Progress"
-          onPress={() => go({ name: 'drillProgress', context: { bikeId: bike.id, drillId: drill.id, setupVariantId: session.setupVariantId } })}
+          onPress={() =>
+            go({
+              name: 'drillProgress',
+              context: { bikeId: bike.id, drillId: drill.id, setupVariantId: session.setupVariantId },
+              returnTo: { name: 'session', sessionId: session.id, session },
+            })
+          }
         />
       </View>
       {cloudSession && !confirmDelete && (
@@ -1012,7 +1041,7 @@ function DrillProgressScreen({ context, go }: { context: ProgressContext; go: (r
             .slice()
             .reverse()
             .map((session) => (
-              <SessionCard key={session.id} session={session} onPress={() => go({ name: 'session', sessionId: session.id, session })} />
+              <SessionCard key={session.id} session={session} onPress={() => go({ name: 'session', sessionId: session.id, session, returnTo: { name: 'drillProgress', context } })} />
             ))
         )}
       </Section>
@@ -1029,7 +1058,7 @@ function ProgressCard({ context, sessionData, go }: { context: ProgressContext; 
   const best = bestBySession.length ? Math.min(...bestBySession) : undefined;
 
   return (
-    <Pressable style={styles.progressCard} onPress={() => go({ name: 'drillProgress', context })}>
+    <Pressable style={styles.progressCard} onPress={() => go({ name: 'drillProgress', context, returnTo: { name: 'progress' } })}>
       <Text style={styles.cardTitle}>{drill.name}</Text>
       <Text style={styles.cardSub}>{setup}</Text>
       {bestBySession.length > 1 ? (
