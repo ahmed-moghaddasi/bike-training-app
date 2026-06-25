@@ -175,7 +175,7 @@ Detection zone:
 
 - No foot dabs.
 - No cone touches.
-- Lap times within 5 percent across 5 laps.
+- Lap times trend faster while the line stays clean.
 - Similar line every lap.
 - Smooth engine sound with no repeated throttle chop.
 
@@ -183,8 +183,8 @@ Detection zone:
 
 Same timing context:
 
-- Run 5 laps with no foot dabs.
-- Run 5 laps with lap spread under 5 percent.
+- Keep riding while there are no foot dabs.
+- Keep riding while the lap times trend faster and the line stays repeatable.
 - Repeat both directions.
 - Add a focus cue: relaxed inside elbow, eyes farther around, lighter grip.
 
@@ -330,16 +330,16 @@ Detection zone:
 - No foot dabs.
 - No cone touches.
 - Same path through both circles.
-- 5 clean laps with lap spread under 5 percent.
+- Lap times trend faster while both circles stay clean.
 - Body transition visibly starts before the crossover.
 
 ## Progressions
 
 Same timing context:
 
-- 5 clean laps clockwise starting direction.
-- 5 clean laps opposite starting direction.
-- Count only laps where body is set before entry.
+- Ride clockwise-starting cycles while the body is set before entry.
+- Ride opposite-starting cycles while the body is set before entry.
+- Review only laps where body is set before entry.
 - Add a review score for eyes, body timing, line, throttle.
 
 New setup variant:
@@ -486,15 +486,15 @@ Detection zone:
 - Exit gate hit cleanly.
 - No cone touches.
 - No foot dabs.
-- 5 reps with times within 5 percent.
+- Runs get faster while the exit stays clean.
 - Rider can explain whether mistakes came from brake, turn, or throttle.
 
 ## Progressions
 
 Same timing context:
 
-- 5 clean reps with no exit-gate miss.
-- 5 reps with spread under 5 percent.
+- Keep running clean reps with no exit-gate miss.
+- Keep running while times improve and the exit stays repeatable.
 - Add a video review goal: eyes to exit before apex.
 
 New setup variant:
@@ -636,7 +636,7 @@ Detection zone:
 - Clean exit gate.
 - No early-apex cone violation.
 - No cone touches.
-- 5 reps within 5 percent.
+- Runs get faster while the line stays clean.
 - Video shows one decisive turn rather than several corrections.
 
 ## Progressions
@@ -644,7 +644,7 @@ Detection zone:
 Same timing context:
 
 - Compare early-apex and late-apex videos, but do not mix their timed logs.
-- 5 clean late-apex reps each direction.
+- Run clean late-apex passes each direction.
 - Require eyes to exit before turn-in.
 
 New setup variant:
