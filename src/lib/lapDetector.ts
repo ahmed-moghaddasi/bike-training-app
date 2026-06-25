@@ -15,12 +15,12 @@ export type LapDetectionResult = {
   diagnostics: LapDetectionDiagnostics;
 };
 
-export type CandidateOutcome = 'confirmed' | 'sequence-timeout' | 'decay-failed';
+export type CandidateOutcome = 'confirmed' | 'sequence-timeout' | 'decay-failed' | 'suppressed-by-cooldown';
 
 export type CandidateLog = {
   /** Seconds into the clip where the candidate strip first activated. */
   startTimeSeconds: number;
-  strip: 'left' | 'right';
+  strip: 'left' | 'right' | 'both';
   outcome: CandidateOutcome;
   /** Seconds into the clip where the opposite strip confirmed, if it did. */
   confirmedAtSeconds?: number;
@@ -263,7 +263,7 @@ function computeChangedRatioSeries(frames: CapturedFrame[], baseline: Float32Arr
 }
 
 type RawCandidate = {
-  strip: 'left' | 'right';
+  strip: 'left' | 'right' | 'both';
   startTime: number;
   outcome: CandidateOutcome;
   confirmedAt?: number;
@@ -278,6 +278,15 @@ function detectCrossings(series: RatioSample[]): { crossings: Crossing[]; candid
   let pendingStrip: 'left' | 'right' | null = null;
   let pendingSince = 0;
   let lastCrossingAt = Number.NEGATIVE_INFINITY;
+  let cooldownActivityStart: number | null = null;
+  let cooldownActivityStrip: 'left' | 'right' | 'both' | null = null;
+
+  function flushCooldownActivity() {
+    if (cooldownActivityStart === null) return;
+    candidates.push({ strip: cooldownActivityStrip ?? 'both', startTime: cooldownActivityStart, outcome: 'suppressed-by-cooldown' });
+    cooldownActivityStart = null;
+    cooldownActivityStrip = null;
+  }
 
   for (let i = 0; i < series.length; i += 1) {
     const { time, leftRatio, rightRatio } = series[i];
@@ -294,8 +303,18 @@ function detectCrossings(series: RatioSample[]): { crossings: Crossing[]; candid
 
     if (time - lastCrossingAt < COOLDOWN_MS) {
       pendingStrip = null;
+      // A real pass attempted before cooldown clears would otherwise vanish with no trace at all.
+      if (leftActive || rightActive) {
+        if (cooldownActivityStart === null) {
+          cooldownActivityStart = time;
+          cooldownActivityStrip = leftActive && rightActive ? 'both' : leftActive ? 'left' : 'right';
+        }
+      } else {
+        flushCooldownActivity();
+      }
       continue;
     }
+    flushCooldownActivity();
 
     const leftConfirmed = leftActiveSince !== null && time - leftActiveSince >= MIN_ACTIVE_MS;
     const rightConfirmed = rightActiveSince !== null && time - rightActiveSince >= MIN_ACTIVE_MS;
@@ -328,6 +347,7 @@ function detectCrossings(series: RatioSample[]): { crossings: Crossing[]; candid
   if (pendingStrip) {
     candidates.push({ strip: pendingStrip, startTime: pendingSince, outcome: 'sequence-timeout' });
   }
+  flushCooldownActivity();
 
   return { crossings, candidates };
 }
