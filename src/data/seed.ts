@@ -85,11 +85,11 @@ export const drills: Drill[] = [
     coachingCues: ['One radius. One throttle. One clean line.', 'Eyes lead. Hands only follow.', 'Same circle, same sound, same body.'],
     commonMistakes: ['Looking down at cones', 'Chopping throttle mid-circle', 'Moving body after lean', 'Circle grows wider each lap'],
     reviewPrompts: ['Does the line stay the same size?', 'Does the engine note stay steady?', 'Are arms relaxed?'],
-    successMetrics: ['No foot dabs', 'No cone touches', '5 laps within 5 percent', 'Smooth engine sound'],
+    successMetrics: ['No foot dabs', 'No cone touches', 'Lap times trending faster', 'Smooth engine sound'],
     progressions: [
       {
-        title: 'Five clean laps',
-        description: 'Run 5 laps with no cone touches and lap spread under 5 percent.',
+        title: 'Clean faster laps',
+        description: 'Keep riding while the circle stays clean and the lap times trend faster.',
         comparisonType: 'sameTimingContext',
       },
       {
@@ -161,11 +161,11 @@ export const drills: Drill[] = [
     coachingCues: ['Body moves before the turn asks for it.', 'Fast body. Calm hands.', 'Transition clean. Then corner.'],
     commonMistakes: ['Looking at the old circle', 'Body moves after turn-in', 'Cutting inside the circle', 'Random throttle blips'],
     reviewPrompts: ['Does head move before the transition?', 'Are both circles the same size?', 'Is body set before entry?'],
-    successMetrics: ['No foot dabs', 'No cone touches', '5 clean laps within 5 percent', 'Body transition starts before crossover'],
+    successMetrics: ['No foot dabs', 'No cone touches', 'Lap times trending faster', 'Body transition starts before crossover'],
     progressions: [
       {
-        title: 'Five clean cycles',
-        description: 'Run 5 full cycles and count only laps where body is set before entry.',
+        title: 'Clean faster cycles',
+        description: 'Keep riding while the full figure-eight stays clean and the lap times trend faster.',
         comparisonType: 'sameTimingContext',
       },
       {
@@ -230,11 +230,11 @@ export const drills: Drill[] = [
     coachingCues: ['Brake with discipline, not panic.', 'Wait until the exit makes sense.', 'Point it, pick it up, drive.'],
     commonMistakes: ['Braking too late', 'Releasing brake abruptly', 'Turning in early', 'Opening throttle while pointed wide'],
     reviewPrompts: ['Was brake squeeze progressive?', 'Was direction set before throttle?', 'Did the line run wide after apex?'],
-    successMetrics: ['Exit gate hit cleanly', 'No cone touches', '5 reps within 5 percent', 'No throttle before direction'],
+    successMetrics: ['Exit gate hit cleanly', 'No cone touches', 'Runs getting faster', 'No throttle before direction'],
     progressions: [
       {
         title: 'Exit-gate discipline',
-        description: 'Run 5 clean reps without missing the exit gate.',
+        description: 'Keep running clean reps while hitting the exit gate and improving the time.',
         comparisonType: 'sameTimingContext',
       },
       {
@@ -298,11 +298,11 @@ export const drills: Drill[] = [
     coachingCues: ['Stay wide one beat longer.', 'Look at the exit, then turn.', 'One clean turn beats three corrections.'],
     commonMistakes: ['Turning at the first inside cone', 'Looking at apex instead of exit', 'Running wide after apex', 'Drifting inward on approach'],
     reviewPrompts: ['Did rider stay wide?', 'Was direction set before throttle?', 'Did line require multiple corrections?'],
-    successMetrics: ['Clean exit gate', 'No early-apex violation', '5 reps within 5 percent', 'One decisive turn'],
+    successMetrics: ['Clean exit gate', 'No early-apex violation', 'Runs getting faster', 'One decisive turn'],
     progressions: [
       {
         title: 'Late-apex discipline',
-        description: 'Run 5 clean reps each direction with no early-apex violation.',
+        description: 'Keep running clean passes while holding the late-apex line and improving the time.',
         comparisonType: 'sameTimingContext',
       },
       {
