@@ -62,6 +62,6 @@ export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
   sequenceTimeoutMs: 1_500,
   decayWindowMs: 1_000,
   modeBinCount: 32,
-  baselineWindowSeconds: 30,
+  baselineWindowSeconds: 12,
   playbackRate: 8,
 };
