@@ -28,16 +28,22 @@ export type DetectionConfig = {
   sequenceTimeoutMs: number;
   /** How long after a confirmed crossing the signal has to fall back below threshold before it's accepted as a real pass, not sustained drift. */
   decayWindowMs: number;
-  /** Number of luminance bins used when computing the clip-wide per-pixel background mode (the starting baseline). */
+  /** Number of luminance bins used when computing each window's per-pixel background mode. */
   modeBinCount: number;
   /**
-   * How many seconds of unchanged pixels it takes the baseline to close ~63%
-   * of the gap toward current lighting, after starting from the clip-wide
-   * mode. Time-based (not per-frame) so it adapts at the same real-world
-   * speed regardless of capture fps, which varies a lot by browser/device.
-   * 0 disables adaptation entirely.
+   * The baseline is recomputed fresh from real nearby frames every this many
+   * seconds (non-causal — the whole clip is already in memory), instead of
+   * one fixed baseline for the whole session. A single clip-wide baseline
+   * can't track real lighting drift (sun, clouds) over a multi-minute
+   * session; incrementally blending one baseline forward has a deadlock
+   * (a pixel only updates if it's currently classified "unchanged," so a
+   * pixel that started off far enough from baseline can never recover).
+   * Recomputing fresh per window sidesteps both problems. Must stay long
+   * enough that the bike's brief presence at any given pixel stays a small
+   * minority of the window, or the mode could lock onto the bike instead of
+   * the background.
    */
-  baselineTimeConstantSeconds: number;
+  baselineWindowSeconds: number;
   /** Video playback speed used while decoding for analysis — higher finishes faster but can drop frames if the browser can't keep up. */
   playbackRate: number;
 };
@@ -56,6 +62,6 @@ export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
   sequenceTimeoutMs: 1_500,
   decayWindowMs: 1_000,
   modeBinCount: 32,
-  baselineTimeConstantSeconds: 2.5,
+  baselineWindowSeconds: 30,
   playbackRate: 8,
 };

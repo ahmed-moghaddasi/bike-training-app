@@ -80,8 +80,8 @@ export async function detectLapsFromVideo(videoUri: string, config: LapDetection
   if (frames.length === 0) return { laps: [], detectionEvents: [], diagnostics: emptyDiagnostics };
 
   const pixelCount = detection.sampleWidth * detection.sampleHeight;
-  const baseline = computeModeBaseline(frames.map((frame) => frame.grid), pixelCount, detection.modeBinCount);
-  const series = computeChangedRatioSeries(frames, baseline, detection);
+  const { baselines, windowOf } = computeWindowedBaselines(frames, pixelCount, detection);
+  const series = computeChangedRatioSeries(frames, baselines, windowOf, detection);
   const { crossings, candidates } = detectCrossings(series, detection);
   const result = reduceCrossingsToLaps(crossings, Math.max(1, config.detectionsPerLap), config.recordingStartedAt);
 
@@ -190,6 +190,7 @@ function extractFrames(videoUri: string, detection: DetectionConfig): Promise<Ca
 }
 
 /** Per-pixel mode luminance across the whole clip — robust to the rider already being in frame at t=0. */
+/** Per-pixel mode luminance over a set of frame grids. */
 function computeModeBaseline(grids: Float32Array[], pixelCount: number, modeBinCount: number): Float32Array {
   const binWidth = 256 / modeBinCount;
   const histogram = new Uint32Array(pixelCount * modeBinCount);
@@ -217,33 +218,51 @@ function computeModeBaseline(grids: Float32Array[], pixelCount: number, modeBinC
 }
 
 /**
- * Walks frames in time order, diffing each against the baseline and then
- * nudging the baseline toward each unchanged pixel (mutates `baseline` in
- * place). Starting from the clip-wide mode handles the rider already being
- * in frame at t=0; continuing to adapt forward handles real lighting drift
- * over a multi-minute session, which a single fixed baseline cannot — a
- * fixed reference left an entire 5-minute lot test reading as "always
- * changed" once the light had drifted far enough from the clip's average.
- * Changed pixels are excluded from the blend so the bike itself never gets
- * absorbed into the background. Splits each frame's grid into primary/
- * secondary halves along the configured orientation's axis.
+ * Splits frames into fixed-length time windows and computes a fresh mode
+ * baseline per window, instead of one baseline for the whole clip. A single
+ * clip-wide baseline can't track real lighting drift over a multi-minute
+ * session; incrementally blending one baseline forward has a deadlock (a
+ * pixel only updates while it's currently "unchanged," so a pixel that
+ * started off far enough from baseline can never recover). Recomputing
+ * fresh per window — entirely from real nearby frames — avoids both.
  */
-function computeChangedRatioSeries(frames: CapturedFrame[], baseline: Float32Array, detection: DetectionConfig): RatioSample[] {
-  const { sampleWidth, sampleHeight, pixelDeltaThreshold, orientation, baselineTimeConstantSeconds } = detection;
+function computeWindowedBaselines(
+  frames: CapturedFrame[],
+  pixelCount: number,
+  detection: DetectionConfig,
+): { baselines: Float32Array[]; windowOf: (timeMs: number) => number } {
+  const windowMs = Math.max(1, detection.baselineWindowSeconds * 1000);
+  const startTime = frames[0].time;
+  const endTime = frames[frames.length - 1].time;
+  const windowCount = Math.max(1, Math.ceil((endTime - startTime + 1) / windowMs));
+
+  const windowOf = (timeMs: number) => Math.min(windowCount - 1, Math.max(0, Math.floor((timeMs - startTime) / windowMs)));
+
+  const gridsPerWindow: Float32Array[][] = Array.from({ length: windowCount }, () => []);
+  for (const frame of frames) {
+    gridsPerWindow[windowOf(frame.time)].push(frame.grid);
+  }
+
+  const baselines = gridsPerWindow.map((grids) =>
+    grids.length ? computeModeBaseline(grids, pixelCount, detection.modeBinCount) : new Float32Array(pixelCount),
+  );
+
+  return { baselines, windowOf };
+}
+
+/** Diffs each frame against its own time window's baseline. Splits the grid into primary/secondary halves along the configured orientation's axis. */
+function computeChangedRatioSeries(
+  frames: CapturedFrame[],
+  baselines: Float32Array[],
+  windowOf: (timeMs: number) => number,
+  detection: DetectionConfig,
+): RatioSample[] {
+  const { sampleWidth, sampleHeight, pixelDeltaThreshold, orientation } = detection;
   const halfWidth = Math.floor(sampleWidth / 2);
   const halfHeight = Math.floor(sampleHeight / 2);
-  let previousTimeMs: number | null = null;
 
   return frames.map(({ time, grid }) => {
-    // Time-based (not a flat per-frame rate) so adaptation speed doesn't
-    // depend on capture fps, which varies a lot by browser/device — e.g. a
-    // headless Chrome decode here ran at ~7fps, vs. ~20fps for the original
-    // live detector; a flat per-frame rate tuned for one is ~3x too slow
-    // for the other.
-    const dtSeconds = previousTimeMs !== null ? Math.max(0, (time - previousTimeMs) / 1000) : 0;
-    previousTimeMs = time;
-    const alpha = baselineTimeConstantSeconds > 0 ? 1 - Math.exp(-dtSeconds / baselineTimeConstantSeconds) : 0;
-
+    const baseline = baselines[windowOf(time)];
     let primaryChanged = 0;
     let secondaryChanged = 0;
     let primaryPixels = 0;
@@ -258,9 +277,6 @@ function computeChangedRatioSeries(frames: CapturedFrame[], baseline: Float32Arr
       } else {
         secondaryPixels += 1;
         if (changed) secondaryChanged += 1;
-      }
-      if (!changed && alpha > 0) {
-        baseline[index] += (grid[index] - baseline[index]) * alpha;
       }
     }
     return {
