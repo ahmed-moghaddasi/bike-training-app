@@ -1,14 +1,19 @@
-export const TARGET_VIDEO_BITS_PER_SECOND = 600_000;
+// Tuned for local-only storage and post-processing analysis, not server
+// upload — higher resolution/bitrate gives the detector real detail in the
+// narrowed crop zones instead of upsampled guesses, and audio costs nothing
+// now that nothing leaves the phone unless explicitly saved.
+export const TARGET_VIDEO_BITS_PER_SECOND = 2_500_000;
 export const MAX_RECORDING_DURATION_MS = 8 * 60 * 1_000;
 
 export const CAMERA_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
-  width: { ideal: 640 },
-  height: { ideal: 480 },
+  width: { ideal: 1280 },
+  height: { ideal: 720 },
+  frameRate: { ideal: 30 },
 };
 
 export const CAMERA_MEDIA_CONSTRAINTS: MediaStreamConstraints = {
-  audio: false,
+  audio: true,
   video: CAMERA_VIDEO_CONSTRAINTS,
 };
 
