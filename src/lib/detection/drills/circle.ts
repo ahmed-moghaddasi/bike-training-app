@@ -14,18 +14,16 @@ import type { DetectionConfig } from '../types';
  * - zoneWidthRatio is narrowed from the 0.18 default so the small bike makes
  *   up more of the analyzed strip while crossing, instead of mostly empty
  *   background on either side of it.
- * - bandRatio crops out the sky/foreground above and below the circle's
- *   ground plane, which never has motion and otherwise dilutes the ratio.
- *   bandCenterRatio starts at 0.5 (screen center) — use the on-screen aim
- *   overlay to check this actually lines up with where the circle sits in
- *   frame, and adjust if the tripod height puts the circle off-center.
+ * - bandRatio is left at the full-height default (1) for now: a band crop
+ *   risks cutting the bike out of frame entirely if its actual vertical
+ *   position doesn't match the guessed bandCenterRatio, which is worse than
+ *   the dilution problem it was meant to fix. Revisit once we've seen where
+ *   the bike actually sits on screen from a real test.
  * - sampleWidth/sampleHeight are bumped up so a small subject survives the
  *   downsample with more of its signal intact.
  */
 export const circleDetectionConfig: Partial<DetectionConfig> = {
   zoneWidthRatio: 0.09,
-  bandRatio: 0.4,
-  bandCenterRatio: 0.5,
   sampleWidth: 96,
   sampleHeight: 160,
 };
