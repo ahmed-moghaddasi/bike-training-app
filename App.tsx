@@ -73,6 +73,10 @@ const routeTitles: Record<Route['name'], string> = {
 };
 
 
+function isDebugReprocessMode() {
+  return typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === 'reprocess';
+}
+
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
   const [currentBikeId] = useState(bikes.find((bike) => bike.isCurrent)?.id ?? bikes[0].id);
@@ -86,6 +90,15 @@ export default function App() {
     if (route.name === 'home') return;
     if ('returnTo' in route && route.returnTo) return setRoute(route.returnTo);
     setRoute(parentRoute(route));
+  }
+
+  if (isDebugReprocessMode()) {
+    return (
+      <SafeAreaView style={styles.screen}>
+        <StatusBar style="dark" />
+        <DebugReprocessScreen />
+      </SafeAreaView>
+    );
   }
 
   return (
@@ -786,6 +799,146 @@ function SessionSummaryScreen({
       <Pressable style={styles.discardButton} onPress={() => go({ name: 'drill', drillId })}>
         <Text style={styles.discardText}>Discard</Text>
       </Pressable>
+    </Page>
+  );
+}
+
+/**
+ * Dev-only tool (visit ?debug=reprocess): runs detectLapsFromVideo against a
+ * video file picked from disk instead of a fresh recording, so the detector
+ * can be iterated on against the same real clip without re-riding each time.
+ */
+function DebugReprocessScreen() {
+  const [selectedDrillId, setSelectedDrillId] = useState(drills[0]?.id ?? 'circle');
+  const [videoUri, setVideoUri] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [status, setStatus] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
+  const [laps, setLaps] = useState<Lap[]>([]);
+  const [events, setEvents] = useState<DetectionEvent[]>([]);
+  const [diagnostics, setDiagnostics] = useState<LapDetectionDiagnostics | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'uploaded' | 'error'>('idle');
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const drill = drills.find((item) => item.id === selectedDrillId) ?? drills[0];
+  const times = laps.map((lap) => lap.time);
+  const best = times.length ? Math.min(...times) : undefined;
+
+  function handleFileChange(event: { target: { files?: FileList | null } }) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (videoUri) URL.revokeObjectURL(videoUri);
+    setVideoUri(URL.createObjectURL(file));
+    setFileName(file.name);
+    setStatus('idle');
+    setLaps([]);
+    setEvents([]);
+    setDiagnostics(null);
+    setErrorMessage(null);
+    setUploadStatus('idle');
+  }
+
+  async function runDetection() {
+    if (!videoUri) return;
+    setStatus('processing');
+    setErrorMessage(null);
+    try {
+      const result = await detectLapsFromVideo(videoUri, {
+        detection: getDetectionConfigForDrill(drill.id),
+        detectionsPerLap: drill.timingRule.detectionsPerLap ?? 1,
+        recordingStartedAt: new Date().toISOString(),
+      });
+      setLaps(result.laps);
+      setEvents(result.detectionEvents);
+      setDiagnostics(result.diagnostics);
+      setStatus('done');
+      setUploadStatus('uploading');
+      const uploadResult = await uploadDebugReport({
+        drillId: drill.id,
+        startedAt: new Date().toISOString(),
+        payload: { source: 'manual-reprocess', fileName, laps: result.laps, detectionEvents: result.detectionEvents, diagnostics: result.diagnostics },
+      });
+      setUploadStatus(uploadResult.ok ? 'uploaded' : 'error');
+      setUploadError(uploadResult.ok ? null : uploadResult.error ?? 'Unknown error.');
+    } catch (error) {
+      setStatus('error');
+      setErrorMessage(error instanceof Error ? error.message : 'Could not process this video.');
+    }
+  }
+
+  function downloadReport() {
+    if (!diagnostics) return;
+    const payload = { drillId: drill.id, fileName, laps, detectionEvents: events, diagnostics };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `apex-lab-reprocess-${drill.id}-${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  return (
+    <Page title="Debug: Reprocess Video" subtitle="Re-run the detector against a saved clip without re-recording.">
+      <Section label="Drill">
+        <View style={styles.drillGrid}>
+          {drills.map((item) => (
+            <Pressable key={item.id} style={styles.contextPill} onPress={() => setSelectedDrillId(item.id)}>
+              <Text style={styles.contextPillText}>{item.name}{item.id === selectedDrillId ? ' (selected)' : ''}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </Section>
+
+      <Section label="Video File">
+        {Platform.OS === 'web' &&
+          React.createElement('input', {
+            type: 'file',
+            accept: 'video/*',
+            onChange: handleFileChange,
+          })}
+        {fileName && <Text style={styles.bodyText}>{fileName}</Text>}
+        {videoUri && Platform.OS === 'web' && (
+          React.createElement('video', {
+            src: videoUri,
+            controls: true,
+            playsInline: true,
+            style: { backgroundColor: colors.black, borderRadius: radius.md, display: 'block', marginTop: 12, width: '100%' },
+          })
+        )}
+      </Section>
+
+      <PrimaryButton label={status === 'processing' ? 'Processing...' : 'Run Detection'} onPress={() => void runDetection()} />
+      {status === 'error' && <Text style={[styles.saveMessage, styles.saveMessageError]}>{errorMessage}</Text>}
+
+      {status === 'done' && diagnostics && (
+        <>
+          <StatGrid
+            items={[
+              ['Best', best ? `${formatLap(best)}s` : '--'],
+              ['Laps', String(laps.length)],
+              ['Frames', String(diagnostics.frameCount)],
+            ]}
+          />
+          <Section label="Lap Times">
+            {laps.length ? <LapList laps={laps} /> : <EmptyState title="No laps detected" body="The detector found no confirmed crossings in this clip." />}
+          </Section>
+          <Section label="Debug Data">
+            <Text style={styles.cardSub}>
+              max ratio {diagnostics.maxPrimaryRatio.toFixed(3)} / {diagnostics.maxSecondaryRatio.toFixed(3)} (threshold {diagnostics.config.changedRatioThreshold}) ·{' '}
+              {diagnostics.candidates.length} candidates
+            </Text>
+            <SecondaryButton label="Export Debug Data" onPress={downloadReport} />
+            {uploadStatus !== 'idle' && (
+              <Text style={[styles.saveMessage, uploadStatus === 'error' && styles.saveMessageError]}>
+                {uploadStatus === 'uploading' ? 'Uploading debug report to Supabase...' : uploadStatus === 'uploaded' ? 'Debug report uploaded to Supabase.' : `Upload failed: ${uploadError}`}
+              </Text>
+            )}
+          </Section>
+        </>
+      )}
     </Page>
   );
 }
