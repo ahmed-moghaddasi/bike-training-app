@@ -28,8 +28,10 @@ export type DetectionConfig = {
   sequenceTimeoutMs: number;
   /** How long after a confirmed crossing the signal has to fall back below threshold before it's accepted as a real pass, not sustained drift. */
   decayWindowMs: number;
-  /** Number of luminance bins used when computing the clip-wide per-pixel background mode. */
+  /** Number of luminance bins used when computing the clip-wide per-pixel background mode (the starting baseline). */
   modeBinCount: number;
+  /** Blend rate (0-1) the baseline keeps drifting toward each frame's unchanged pixels, after starting from the clip-wide mode. Tracks gradual lighting changes (sun, clouds) over a long session; 0 disables adaptation entirely. */
+  baselineLearningRate: number;
   /** Video playback speed used while decoding for analysis — higher finishes faster but can drop frames if the browser can't keep up. */
   playbackRate: number;
 };
@@ -48,5 +50,6 @@ export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
   sequenceTimeoutMs: 1_500,
   decayWindowMs: 1_000,
   modeBinCount: 32,
+  baselineLearningRate: 0.02,
   playbackRate: 8,
 };
