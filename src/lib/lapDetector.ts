@@ -216,7 +216,6 @@ function computeModeBaseline(grids: Float32Array[], pixelCount: number, modeBinC
   return baseline;
 }
 
-/** Splits each frame's grid into two halves along the configured orientation's axis. */
 /**
  * Walks frames in time order, diffing each against the baseline and then
  * nudging the baseline toward each unchanged pixel (mutates `baseline` in
@@ -226,14 +225,25 @@ function computeModeBaseline(grids: Float32Array[], pixelCount: number, modeBinC
  * fixed reference left an entire 5-minute lot test reading as "always
  * changed" once the light had drifted far enough from the clip's average.
  * Changed pixels are excluded from the blend so the bike itself never gets
- * absorbed into the background.
+ * absorbed into the background. Splits each frame's grid into primary/
+ * secondary halves along the configured orientation's axis.
  */
 function computeChangedRatioSeries(frames: CapturedFrame[], baseline: Float32Array, detection: DetectionConfig): RatioSample[] {
-  const { sampleWidth, sampleHeight, pixelDeltaThreshold, orientation, baselineLearningRate } = detection;
+  const { sampleWidth, sampleHeight, pixelDeltaThreshold, orientation, baselineTimeConstantSeconds } = detection;
   const halfWidth = Math.floor(sampleWidth / 2);
   const halfHeight = Math.floor(sampleHeight / 2);
+  let previousTimeMs: number | null = null;
 
   return frames.map(({ time, grid }) => {
+    // Time-based (not a flat per-frame rate) so adaptation speed doesn't
+    // depend on capture fps, which varies a lot by browser/device — e.g. a
+    // headless Chrome decode here ran at ~7fps, vs. ~20fps for the original
+    // live detector; a flat per-frame rate tuned for one is ~3x too slow
+    // for the other.
+    const dtSeconds = previousTimeMs !== null ? Math.max(0, (time - previousTimeMs) / 1000) : 0;
+    previousTimeMs = time;
+    const alpha = baselineTimeConstantSeconds > 0 ? 1 - Math.exp(-dtSeconds / baselineTimeConstantSeconds) : 0;
+
     let primaryChanged = 0;
     let secondaryChanged = 0;
     let primaryPixels = 0;
@@ -249,8 +259,8 @@ function computeChangedRatioSeries(frames: CapturedFrame[], baseline: Float32Arr
         secondaryPixels += 1;
         if (changed) secondaryChanged += 1;
       }
-      if (!changed && baselineLearningRate > 0) {
-        baseline[index] += (grid[index] - baseline[index]) * baselineLearningRate;
+      if (!changed && alpha > 0) {
+        baseline[index] += (grid[index] - baseline[index]) * alpha;
       }
     }
     return {
