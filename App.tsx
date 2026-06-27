@@ -824,6 +824,39 @@ function DebugReprocessScreen() {
   const times = laps.map((lap) => lap.time);
   const best = times.length ? Math.min(...times) : undefined;
 
+  // Lets a headless/automated run load a video by URL instead of through the
+  // file picker, e.g. ?debug=reprocess&videoUrl=http://localhost:PORT/clip.mp4&drill=circle&autorun=1
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const videoUrlParam = params.get('videoUrl');
+    const drillParam = params.get('drill');
+    const autorun = params.get('autorun') === '1';
+    if (drillParam) setSelectedDrillId(drillParam);
+    if (!videoUrlParam) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch(videoUrlParam);
+        const blob = await response.blob();
+        if (cancelled) return;
+        const uri = URL.createObjectURL(blob);
+        setVideoUri(uri);
+        setFileName(videoUrlParam.split('/').pop() ?? 'video');
+        if (autorun) await runDetection(uri, drillParam ?? undefined);
+      } catch (error) {
+        if (cancelled) return;
+        setStatus('error');
+        setErrorMessage(error instanceof Error ? error.message : 'Could not load video from URL.');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function handleFileChange(event: { target: { files?: FileList | null } }) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -838,14 +871,16 @@ function DebugReprocessScreen() {
     setUploadStatus('idle');
   }
 
-  async function runDetection() {
-    if (!videoUri) return;
+  async function runDetection(overrideUri?: string, overrideDrillId?: string) {
+    const uri = overrideUri ?? videoUri;
+    if (!uri) return;
+    const targetDrill = drills.find((item) => item.id === (overrideDrillId ?? selectedDrillId)) ?? drills[0];
     setStatus('processing');
     setErrorMessage(null);
     try {
-      const result = await detectLapsFromVideo(videoUri, {
-        detection: getDetectionConfigForDrill(drill.id),
-        detectionsPerLap: drill.timingRule.detectionsPerLap ?? 1,
+      const result = await detectLapsFromVideo(uri, {
+        detection: getDetectionConfigForDrill(targetDrill.id),
+        detectionsPerLap: targetDrill.timingRule.detectionsPerLap ?? 1,
         recordingStartedAt: new Date().toISOString(),
       });
       setLaps(result.laps);
@@ -854,7 +889,7 @@ function DebugReprocessScreen() {
       setStatus('done');
       setUploadStatus('uploading');
       const uploadResult = await uploadDebugReport({
-        drillId: drill.id,
+        drillId: targetDrill.id,
         startedAt: new Date().toISOString(),
         payload: { source: 'manual-reprocess', fileName, laps: result.laps, detectionEvents: result.detectionEvents, diagnostics: result.diagnostics },
       });
