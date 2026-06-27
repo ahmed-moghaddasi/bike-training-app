@@ -13,13 +13,16 @@ import type { DetectionConfig } from '../types';
  * Because the bike is small and the camera is wide to fit the whole circle:
  * - zoneWidthRatio is narrowed from the 0.18 default so the small bike makes
  *   up more of the analyzed strip while crossing, instead of mostly empty
- *   background on either side of it. Real lot data (2026-06-27) showed 0.09
- *   was too narrow: one side's signal repeatedly never crossed threshold
- *   during several real passes (max ~0.016 vs. the 0.02 threshold) while
- *   the other side spiked normally — consistent with natural lap-to-lap
- *   path variance occasionally drifting outside a 9%-wide strip on one
- *   side. Widened to 0.13 to trade back some signal concentration for more
- *   tolerance of that variance.
+ *   background on either side of it. Tried widening to 0.13 on the theory
+ *   that 0.09 was clipping some passes due to natural path variance
+ *   (2026-06-27) — that theory was wrong: widening dropped confirmed
+ *   crossings from 49 to 44 and roughly halved the peak signal (0.20 ->
+ *   0.11), since a wider zone dilutes the ratio with more background more
+ *   than it gains in path tolerance. Reverted to 0.09, the best result so
+ *   far (24 laps, several clean ~5s laps, zero decay-failed). The
+ *   remaining missed-crossing cases are still unexplained; don't assume
+ *   "narrower is always better" or "wider is always better" without
+ *   re-testing — this parameter doesn't move monotonically with miss rate.
  * - bandRatio is left at the full-height default (1) for now: a band crop
  *   risks cutting the bike out of frame entirely if its actual vertical
  *   position doesn't match the guessed bandCenterRatio, which is worse than
@@ -29,7 +32,7 @@ import type { DetectionConfig } from '../types';
  *   downsample with more of its signal intact.
  */
 export const circleDetectionConfig: Partial<DetectionConfig> = {
-  zoneWidthRatio: 0.13,
+  zoneWidthRatio: 0.09,
   sampleWidth: 96,
   sampleHeight: 160,
 };
