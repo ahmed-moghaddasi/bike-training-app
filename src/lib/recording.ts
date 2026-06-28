@@ -5,9 +5,13 @@
 export const TARGET_VIDEO_BITS_PER_SECOND = 2_500_000;
 export const MAX_RECORDING_DURATION_MS = 8 * 60 * 1_000;
 
+// 4:3, not 1280x720 (16:9) -- the rider's camera framing/aim is calibrated by
+// eye for the original 640x480 (4:3) shape. Switching aspect ratio, not just
+// pixel count, would shift where the crop zones land relative to the actual
+// gate even though signal strength improves. Keep the same shape, more pixels.
 export const CAMERA_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
-  width: { ideal: 1280 },
+  width: { ideal: 960 },
   height: { ideal: 720 },
   frameRate: { ideal: 30 },
 };
