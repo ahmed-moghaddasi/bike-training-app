@@ -46,6 +46,31 @@ export type DetectionConfig = {
   baselineWindowSeconds: number;
   /** Video playback speed used while decoding for analysis — higher finishes faster but can drop frames if the browser can't keep up. */
   playbackRate: number;
+  /**
+   * A real lap alternates crossing direction every time (out one way, back
+   * the other) — a rider physically cannot cross the same direction twice
+   * in a row while circling continuously. If a confirmed crossing repeats
+   * the previous confirmed crossing's direction within this window, it's
+   * almost certainly a double-trigger from noise (shadow flicker, glare),
+   * not a genuine pass, and gets dropped instead of corrupting lap pairing
+   * for everything after it.
+   *
+   * Only meaningful for drills where a continuous loop genuinely must
+   * alternate sides every pass (Circle) — defaults to 0 (disabled) because
+   * a point-to-point drill (Hairpin, L-Turn) can legitimately cross the
+   * same direction every single rep by design, and treating that as noise
+   * would silently eat real reps.
+   *
+   * Must be well below the fastest plausible half-lap gap, not above it:
+   * tested on a real outdoor Circle session (2026-06-28) where the actual
+   * bug fired noise-duplicates under ~1.6s after the prior crossing, while
+   * legitimate next-lap crossings that followed a *silently missed* (no
+   * candidate at all, not even decay-failed/sequence-timeout) middle
+   * crossing landed 5s+ later, a full lap's length away. A window set above
+   * that gap would reject those legitimate-but-following-a-miss crossings
+   * too, compounding the original miss instead of recovering from it.
+   */
+  duplicateDirectionWindowMs: number;
 };
 
 export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
@@ -63,6 +88,7 @@ export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
   decayWindowMs: 1_000,
   modeBinCount: 32,
   baselineWindowSeconds: 12,
+  duplicateDirectionWindowMs: 0,
   // 8x caused the browser to drop the vast majority of decoded frames during
   // requestVideoFrameCallback (verified: re-running the same clip at 8x
   // produced a different frame count each time — 577 vs 1149 frames over the

@@ -40,4 +40,11 @@ export const circleDetectionConfig: Partial<DetectionConfig> = {
   // a half never reaching "confirmed" before the bike moved on. Halved to
   // give a brief but real activation room to register.
   minActiveMs: 50,
+  // Real outdoor session (2026-06-28) had shadow/glare flicker fire a
+  // same-direction confirmed crossing ~0.9-1.6s after the previous one —
+  // physically too fast to be a real next pass — which desynced lap
+  // pairing into impossible ~2-3s and ~10s+ readings for several laps
+  // after. The known-good ground-truth clips' fastest real half-lap gap is
+  // ~2.1-2.4s, so 1900ms sits between the two with margin on both sides.
+  duplicateDirectionWindowMs: 1_900,
 };

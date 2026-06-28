@@ -16,7 +16,7 @@ export type LapDetectionResult = {
   diagnostics: LapDetectionDiagnostics;
 };
 
-export type CandidateOutcome = 'confirmed' | 'sequence-timeout' | 'decay-failed' | 'suppressed-by-cooldown';
+export type CandidateOutcome = 'confirmed' | 'sequence-timeout' | 'decay-failed' | 'suppressed-by-cooldown' | 'duplicate-direction';
 
 /**
  * 'primary'/'secondary' map to the two halves of whichever axis the drill's
@@ -309,7 +309,7 @@ type RawCandidate = {
 
 /** Asymmetric crossing sequence (one half activates, then the other), same idea as the old live detector, evaluated over the whole series. */
 function detectCrossings(series: RatioSample[], detection: DetectionConfig): { crossings: Crossing[]; candidates: RawCandidate[] } {
-  const { changedRatioThreshold, minActiveMs, cooldownMs, sequenceTimeoutMs, decayWindowMs } = detection;
+  const { changedRatioThreshold, minActiveMs, cooldownMs, sequenceTimeoutMs, decayWindowMs, duplicateDirectionWindowMs } = detection;
   const crossings: Crossing[] = [];
   const candidates: RawCandidate[] = [];
   let primaryActiveSince: number | null = null;
@@ -317,6 +317,7 @@ function detectCrossings(series: RatioSample[], detection: DetectionConfig): { c
   let pendingHalf: 'primary' | 'secondary' | null = null;
   let pendingSince = 0;
   let lastCrossingAt = Number.NEGATIVE_INFINITY;
+  let lastConfirmedDirection: Crossing['direction'] | null = null;
   let cooldownActivityStart: number | null = null;
   let cooldownActivityHalf: 'primary' | 'secondary' | 'both' | null = null;
 
@@ -368,10 +369,21 @@ function detectCrossings(series: RatioSample[], detection: DetectionConfig): { c
     if (pendingHalf === 'primary' && secondaryConfirmed) direction = 'primary-to-secondary';
     if (pendingHalf === 'secondary' && primaryConfirmed) direction = 'secondary-to-primary';
 
-    if (direction && decaysWithinWindow(series, i, changedRatioThreshold, decayWindowMs)) {
+    if (direction && direction === lastConfirmedDirection && time - lastCrossingAt <= duplicateDirectionWindowMs) {
+      // A real lap alternates direction every pass — seeing the same direction
+      // again this soon means the previous crossing's far side flickered back
+      // on (shadow, glare), not that the rider crossed the same way twice in
+      // a row. Drop it without disturbing lastCrossingAt/lastConfirmedDirection
+      // so the next genuinely alternating crossing is still judged correctly.
+      candidates.push({ half: pendingHalf!, startTime: pendingSince, outcome: 'duplicate-direction', confirmedAt: time });
+      pendingHalf = null;
+      primaryActiveSince = null;
+      secondaryActiveSince = null;
+    } else if (direction && decaysWithinWindow(series, i, changedRatioThreshold, decayWindowMs)) {
       crossings.push({ time, direction, score: Math.max(primaryRatio, secondaryRatio) / changedRatioThreshold });
       candidates.push({ half: pendingHalf!, startTime: pendingSince, outcome: 'confirmed', confirmedAt: time });
       lastCrossingAt = time;
+      lastConfirmedDirection = direction;
       pendingHalf = null;
       primaryActiveSince = null;
       secondaryActiveSince = null;
