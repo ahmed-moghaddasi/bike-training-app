@@ -92,6 +92,29 @@ export type SessionDraft = {
   needsProcessing?: boolean;
 };
 
+/**
+ * A lap-detection run for one recorded draft, owned by App (not by whichever
+ * screen happens to be mounted) so navigating away from Session Summary
+ * doesn't kill the in-flight detectLapsFromVideo call or the save that
+ * follows it. See JobRunner in App.tsx.
+ */
+export type ProcessingJob = {
+  id: string;
+  drillId: string;
+  draft: SessionDraft;
+  status: 'extracting' | 'done' | 'error';
+  laps: Lap[];
+  detectionEvents: DetectionEvent[];
+  diagnostics?: unknown;
+  errorMessage?: string;
+  /** Notes typed on Session Summary before the user chose to save without waiting. */
+  notes: string;
+  /** Set when the user taps Save Session while status is still 'extracting' — JobRunner saves automatically once detection resolves. */
+  saveRequested: boolean;
+  saveStatus: 'idle' | 'saving' | 'saved' | 'error';
+  saveError?: string;
+};
+
 export type Session = {
   id: string;
   date: string;

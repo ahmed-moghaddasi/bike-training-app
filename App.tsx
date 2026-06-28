@@ -38,7 +38,7 @@ import {
 import { shareOrDownloadVideo } from './src/lib/localVideo';
 import { deleteSavedSession, isSupabaseConfigured, loadSavedSessions, saveSessionDraft, uploadDebugReport } from './src/lib/supabase';
 import { colors, fonts, radius, spacing } from './src/theme';
-import type { Bike, DetectionEvent, Drill, Lap, ProgressContext, Session, SessionDraft, SetupVariant } from './src/types';
+import type { Bike, DetectionEvent, Drill, Lap, ProcessingJob, ProgressContext, Session, SessionDraft, SetupVariant } from './src/types';
 
 type ReturnRoute =
   | { name: 'home' }
@@ -77,12 +77,62 @@ function isDebugReprocessMode() {
   return typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === 'reprocess';
 }
 
+function createJobId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return `job-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 export default function App() {
   const [route, setRoute] = useState<Route>({ name: 'home' });
   const [currentBikeId] = useState(bikes.find((bike) => bike.isCurrent)?.id ?? bikes[0].id);
   const currentBike = bikes.find((bike) => bike.id === currentBikeId) ?? bikes[0];
+  const [jobs, setJobs] = useState<ProcessingJob[]>([]);
+  const [toast, setToast] = useState<{ message: string; isError: boolean } | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function showToast(message: string, isError: boolean) {
+    setToast({ message, isError });
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 4500);
+  }
+
+  function updateJob(id: string, patch: Partial<ProcessingJob>) {
+    setJobs((prev) => prev.map((job) => (job.id === id ? { ...job, ...patch } : job)));
+  }
+
+  function requestBackgroundSave(id: string, notes: string) {
+    updateJob(id, { saveRequested: true, notes });
+  }
+
+  function discardJob(id: string) {
+    setJobs((prev) => {
+      const job = prev.find((item) => item.id === id);
+      if (job?.draft.videoUri) URL.revokeObjectURL(job.draft.videoUri);
+      return prev.filter((item) => item.id !== id);
+    });
+  }
 
   function go(next: Route) {
+    if (next.name === 'summary' && next.draft?.needsProcessing && next.draft.videoUri) {
+      const draft = next.draft;
+      const alreadyTracked = jobs.some((job) => job.draft.startedAt === draft.startedAt);
+      if (!alreadyTracked) {
+        setJobs((prev) => [
+          ...prev,
+          {
+            id: createJobId(),
+            drillId: next.drillId,
+            draft,
+            status: 'extracting',
+            laps: [],
+            detectionEvents: [],
+            notes: '',
+            saveRequested: false,
+            saveStatus: 'idle',
+          },
+        ]);
+      }
+    }
     setRoute(next);
   }
 
@@ -126,13 +176,116 @@ export default function App() {
       {route.name === 'drills' && <DrillsScreen currentBikeId={currentBikeId} go={go} />}
       {route.name === 'drill' && <DrillDetailScreen drillId={route.drillId} go={go} />}
       {route.name === 'camera' && <CameraScreen drillId={route.drillId} currentBike={currentBike} go={go} />}
-      {route.name === 'summary' && <SessionSummaryScreen drillId={route.drillId} currentBike={currentBike} draft={route.draft} go={go} />}
+      {route.name === 'summary' && (
+        <SessionSummaryScreen
+          drillId={route.drillId}
+          currentBike={currentBike}
+          draft={route.draft}
+          job={route.draft ? jobs.find((job) => job.draft.startedAt === route.draft!.startedAt) : undefined}
+          onRequestBackgroundSave={requestBackgroundSave}
+          onDiscardJob={discardJob}
+          go={go}
+        />
+      )}
       {route.name === 'sessions' && <SessionsScreen go={go} />}
       {route.name === 'session' && <SessionDetailScreen sessionId={route.sessionId} cloudSession={route.session} go={go} />}
       {route.name === 'progress' && <ProgressScreen currentBikeId={currentBikeId} go={go} />}
       {route.name === 'drillProgress' && <DrillProgressScreen context={route.context} go={go} />}
+
+      {jobs.map((job) => (
+        <JobRunner key={job.id} job={job} onUpdate={updateJob} onToast={showToast} />
+      ))}
+      {toast && (
+        <View style={[styles.toast, toast.isError && styles.toastError]}>
+          <Text style={styles.toastText}>{toast.message}</Text>
+        </View>
+      )}
     </SafeAreaView>
   );
+}
+
+/**
+ * Owns one recording's lap detection from start to (optionally) save,
+ * mounted at the App level so it keeps running no matter which screen the
+ * rider navigates to — only Discard tears it down (see discardJob in App).
+ */
+function JobRunner({
+  job,
+  onUpdate,
+  onToast,
+}: {
+  job: ProcessingJob;
+  onUpdate: (id: string, patch: Partial<ProcessingJob>) => void;
+  onToast: (message: string, isError: boolean) => void;
+}) {
+  const startedRef = useRef(false);
+  const drill = drills.find((item) => item.id === job.drillId) ?? drills[0];
+
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    if (!job.draft.videoUri) {
+      onUpdate(job.id, { status: 'error', errorMessage: 'No video was recorded for this run.' });
+      return;
+    }
+    let cancelled = false;
+    detectLapsFromVideo(job.draft.videoUri, {
+      detection: getDetectionConfigForDrill(drill.id),
+      detectionsPerLap: drill.timingRule.detectionsPerLap ?? 1,
+      recordingStartedAt: job.draft.startedAt,
+    })
+      .then((result) => {
+        if (cancelled) return;
+        onUpdate(job.id, {
+          status: 'done',
+          laps: result.laps,
+          detectionEvents: result.detectionEvents,
+          diagnostics: result.diagnostics,
+        });
+        void uploadDebugReport({
+          drillId: job.drillId,
+          startedAt: job.draft.startedAt,
+          payload: { laps: result.laps, detectionEvents: result.detectionEvents, diagnostics: result.diagnostics },
+        });
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        onUpdate(job.id, {
+          status: 'error',
+          errorMessage: error instanceof Error ? error.message : 'Could not analyze this recording for laps.',
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The rider may tap "Save Session" while this is still extracting (saveRequested
+  // flips true via App's requestBackgroundSave) — once detection lands, save then.
+  useEffect(() => {
+    if (job.status === 'extracting' || !job.saveRequested || job.saveStatus !== 'idle') return;
+    if (job.status === 'error') {
+      onUpdate(job.id, { saveStatus: 'error', saveError: job.errorMessage });
+      onToast(`Could not analyze "${drill.name}" — laps were not detected.`, true);
+      return;
+    }
+    onUpdate(job.id, { saveStatus: 'saving' });
+    saveSessionDraft({ ...job.draft, laps: job.laps, detectionEvents: job.detectionEvents }, job.notes, false)
+      .then(() => {
+        onUpdate(job.id, { saveStatus: 'saved' });
+        onToast(`${drill.name} saved · ${job.laps.length} lap${job.laps.length === 1 ? '' : 's'}`, false);
+      })
+      .catch((error) => {
+        onUpdate(job.id, {
+          saveStatus: 'error',
+          saveError: error instanceof Error ? error.message : 'Could not save the session.',
+        });
+        onToast(`Could not save "${drill.name}" in the background.`, true);
+      });
+  }, [job.status, job.saveRequested, job.saveStatus]);
+
+  return null;
 }
 
 function parentRoute(route: Route): Route {
@@ -517,11 +670,17 @@ function SessionSummaryScreen({
   drillId,
   currentBike,
   draft,
+  job,
+  onRequestBackgroundSave,
+  onDiscardJob,
   go,
 }: {
   drillId: string;
   currentBike: Bike;
   draft?: SessionDraft;
+  job?: ProcessingJob;
+  onRequestBackgroundSave: (jobId: string, notes: string) => void;
+  onDiscardJob: (jobId: string) => void;
   go: (route: Route) => void;
 }) {
   const drill = drills.find((item) => item.id === drillId) ?? drills[0];
@@ -533,17 +692,22 @@ function SessionSummaryScreen({
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [localVideoStatus, setLocalVideoStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [localVideoMessage, setLocalVideoMessage] = useState<string | null>(null);
-  const [processingStatus, setProcessingStatus] = useState<'idle' | 'processing' | 'done' | 'error'>(
-    draft?.needsProcessing ? 'processing' : 'idle',
-  );
-  const [resolvedLaps, setResolvedLaps] = useState<Lap[]>(draft?.laps ?? []);
-  const [resolvedEvents, setResolvedEvents] = useState<DetectionEvent[]>(draft?.detectionEvents ?? []);
-  const [diagnostics, setDiagnostics] = useState<LapDetectionDiagnostics | null>(null);
-  const [debugUploadStatus, setDebugUploadStatus] = useState<'idle' | 'uploading' | 'uploaded' | 'error'>('idle');
-  const [debugUploadError, setDebugUploadError] = useState<string | null>(null);
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  const isProcessing = processingStatus === 'processing';
+  // Detection now lives in a JobRunner mounted at the App level (see App.tsx)
+  // so it keeps running even if the rider navigates away from this screen.
+  const isProcessing = job?.status === 'extracting';
+  const resolvedLaps = job?.laps ?? draft?.laps ?? [];
+  const resolvedEvents = job?.detectionEvents ?? draft?.detectionEvents ?? [];
+  const diagnostics = job?.diagnostics as LapDetectionDiagnostics | undefined;
+  const effectiveSaveStatus: 'idle' | 'saving' | 'saved' | 'error' = saveStatus !== 'idle' ? saveStatus : job?.saveStatus ?? 'idle';
+  const effectiveSaveMessage =
+    saveMessage ??
+    (job?.saveStatus === 'saved'
+      ? 'Session and laps saved.'
+      : job?.saveStatus === 'error'
+        ? job.saveError ?? 'Could not save the session.'
+        : null);
   const summaryLaps = draft ? resolvedLaps : mockLaps;
   const times = summaryLaps.map((lap) => lap.time);
   const best = times.length ? Math.min(...times) : undefined;
@@ -552,52 +716,10 @@ function SessionSummaryScreen({
   const firstPassTime = resolvedEvents.find((event) => event.eventType === 'sessionStart')?.videoTimestamp;
 
   useEffect(() => {
-    return () => {
-      if (draft?.videoUri) URL.revokeObjectURL(draft.videoUri);
-    };
-  }, [draft?.videoUri]);
-
-  useEffect(() => {
-    if (!draft?.needsProcessing || !draft.videoUri) return;
-    let cancelled = false;
-    setProcessingStatus('processing');
-    detectLapsFromVideo(draft.videoUri, {
-      detection: getDetectionConfigForDrill(drill.id),
-      detectionsPerLap: drill.timingRule.detectionsPerLap ?? 1,
-      recordingStartedAt: draft.startedAt,
-    })
-      .then((result) => {
-        if (cancelled) return;
-        setResolvedLaps(result.laps);
-        setResolvedEvents(result.detectionEvents);
-        setDiagnostics(result.diagnostics);
-        setProcessingStatus('done');
-        setDebugUploadStatus('uploading');
-        uploadDebugReport({
-          drillId: draft.drillId,
-          startedAt: draft.startedAt,
-          payload: { laps: result.laps, detectionEvents: result.detectionEvents, diagnostics: result.diagnostics },
-        }).then((uploadResult) => {
-          if (cancelled) return;
-          setDebugUploadStatus(uploadResult.ok ? 'uploaded' : 'error');
-          setDebugUploadError(uploadResult.ok ? null : uploadResult.error ?? 'Unknown error.');
-        });
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setProcessingStatus('error');
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft?.videoUri]);
-
-  useEffect(() => {
-    if (processingStatus === 'done' && firstPassTime !== undefined && previewVideoRef.current) {
+    if (job?.status === 'done' && firstPassTime !== undefined && previewVideoRef.current) {
       previewVideoRef.current.currentTime = Math.max(0, firstPassTime - 5);
     }
-  }, [processingStatus, firstPassTime]);
+  }, [job?.status, firstPassTime]);
 
   async function saveVideoToDevice() {
     if (!draft?.videoUri) return;
@@ -646,18 +768,24 @@ function SessionSummaryScreen({
   }
 
   async function saveRecordedSession() {
-    if (saveStatus === 'saved') {
+    if (effectiveSaveStatus === 'saved') {
       go({ name: 'sessions' });
       return;
     }
-    if (!draft) {
+    if (!draft || !job) {
       go({ name: 'sessions' });
       return;
     }
-    if (isProcessing) return;
     if (!isSupabaseConfigured) {
       setSaveStatus('error');
       setSaveMessage('Supabase is not configured for this build.');
+      return;
+    }
+    if (job.status === 'extracting') {
+      // Still finding laps — hand off to the background job and leave now;
+      // JobRunner saves automatically once detection resolves.
+      onRequestBackgroundSave(job.id, notes);
+      go({ name: 'sessions' });
       return;
     }
     try {
@@ -674,6 +802,11 @@ function SessionSummaryScreen({
       setSaveStatus('error');
       setSaveMessage(error instanceof Error ? error.message : 'Could not save the session.');
     }
+  }
+
+  function discardAndLeave() {
+    if (job) onDiscardJob(job.id);
+    go({ name: 'drill', drillId });
   }
 
   return (
@@ -715,7 +848,7 @@ function SessionSummaryScreen({
       </Section>
 
       <Section label="Video">
-        {processingStatus === 'error' && (
+        {job?.status === 'error' && (
           <Text style={[styles.bodyText, styles.saveMessageError]}>Could not analyze this recording for laps. The video is still available below.</Text>
         )}
         {draft?.videoUri && Platform.OS === 'web' ? (
@@ -766,15 +899,6 @@ function SessionSummaryScreen({
               </View>
               <SecondaryButton label="Export Debug Data" onPress={downloadDebugReport} />
             </View>
-            <Text style={[styles.saveMessage, debugUploadStatus === 'error' && styles.saveMessageError]}>
-              {debugUploadStatus === 'uploading'
-                ? 'Uploading debug report to Supabase...'
-                : debugUploadStatus === 'uploaded'
-                  ? 'Debug report uploaded to Supabase.'
-                  : debugUploadStatus === 'error'
-                    ? `Debug report upload failed: ${debugUploadError}`
-                    : ''}
-            </Text>
           </>
         )}
       </Section>
@@ -790,13 +914,23 @@ function SessionSummaryScreen({
         />
       </Section>
 
-      {saveMessage && <Text style={[styles.saveMessage, saveStatus === 'error' && styles.saveMessageError]}>{saveMessage}</Text>}
+      {effectiveSaveMessage && (
+        <Text style={[styles.saveMessage, effectiveSaveStatus === 'error' && styles.saveMessageError]}>{effectiveSaveMessage}</Text>
+      )}
 
       <PrimaryButton
-        label={isProcessing ? 'Finding laps...' : saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'View Sessions' : 'Save Session'}
+        label={
+          effectiveSaveStatus === 'saving'
+            ? 'Saving...'
+            : effectiveSaveStatus === 'saved'
+              ? 'View Sessions'
+              : isProcessing
+                ? 'Save & Finish in Background'
+                : 'Save Session'
+        }
         onPress={() => void saveRecordedSession()}
       />
-      <Pressable style={styles.discardButton} onPress={() => go({ name: 'drill', drillId })}>
+      <Pressable style={styles.discardButton} onPress={discardAndLeave}>
         <Text style={styles.discardText}>Discard</Text>
       </Pressable>
     </Page>
@@ -1410,6 +1544,25 @@ const styles = StyleSheet.create({
   screen: {
     backgroundColor: colors.silver,
     flex: 1,
+  },
+  toast: {
+    backgroundColor: colors.charcoal,
+    borderRadius: radius.md,
+    bottom: 20,
+    left: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    position: 'absolute',
+    right: 16,
+  },
+  toastError: {
+    backgroundColor: colors.red,
+  },
+  toastText: {
+    color: colors.white,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    fontWeight: '700',
   },
   page: {
     paddingHorizontal: spacing.pageX,

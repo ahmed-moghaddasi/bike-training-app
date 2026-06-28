@@ -80,8 +80,8 @@ export async function detectLapsFromVideo(videoUri: string, config: LapDetection
   if (frames.length === 0) return { laps: [], detectionEvents: [], diagnostics: emptyDiagnostics };
 
   const pixelCount = detection.sampleWidth * detection.sampleHeight;
-  const { baselines, windowOf } = computeWindowedBaselines(frames, pixelCount, detection);
-  const series = computeChangedRatioSeries(frames, baselines, windowOf, detection);
+  const { baselines, windowOf } = await computeWindowedBaselines(frames, pixelCount, detection);
+  const series = await computeChangedRatioSeries(frames, baselines, windowOf, detection);
   const { crossings, candidates } = detectCrossings(series, detection);
   const result = reduceCrossingsToLaps(crossings, Math.max(1, config.detectionsPerLap), config.recordingStartedAt);
 
@@ -189,16 +189,24 @@ function extractFrames(videoUri: string, detection: DetectionConfig): Promise<Ca
   });
 }
 
+/** Lets a long session's frame-by-frame analysis yield to the main thread instead of blocking it in one long synchronous pass. */
+const YIELD_EVERY_N_FRAMES = 50;
+function yieldToMainThread(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 /** Per-pixel mode luminance across the whole clip — robust to the rider already being in frame at t=0. */
 /** Per-pixel mode luminance over a set of frame grids. */
-function computeModeBaseline(grids: Float32Array[], pixelCount: number, modeBinCount: number): Float32Array {
+async function computeModeBaseline(grids: Float32Array[], pixelCount: number, modeBinCount: number): Promise<Float32Array> {
   const binWidth = 256 / modeBinCount;
   const histogram = new Uint32Array(pixelCount * modeBinCount);
-  for (const grid of grids) {
+  for (let g = 0; g < grids.length; g += 1) {
+    const grid = grids[g];
     for (let index = 0; index < pixelCount; index += 1) {
       const bin = Math.min(modeBinCount - 1, Math.floor(grid[index] / binWidth));
       histogram[index * modeBinCount + bin] += 1;
     }
+    if (g % YIELD_EVERY_N_FRAMES === 0) await yieldToMainThread();
   }
 
   const baseline = new Float32Array(pixelCount);
@@ -226,11 +234,11 @@ function computeModeBaseline(grids: Float32Array[], pixelCount: number, modeBinC
  * started off far enough from baseline can never recover). Recomputing
  * fresh per window — entirely from real nearby frames — avoids both.
  */
-function computeWindowedBaselines(
+async function computeWindowedBaselines(
   frames: CapturedFrame[],
   pixelCount: number,
   detection: DetectionConfig,
-): { baselines: Float32Array[]; windowOf: (timeMs: number) => number } {
+): Promise<{ baselines: Float32Array[]; windowOf: (timeMs: number) => number }> {
   const windowMs = Math.max(1, detection.baselineWindowSeconds * 1000);
   const startTime = frames[0].time;
   const endTime = frames[frames.length - 1].time;
@@ -243,25 +251,28 @@ function computeWindowedBaselines(
     gridsPerWindow[windowOf(frame.time)].push(frame.grid);
   }
 
-  const baselines = gridsPerWindow.map((grids) =>
-    grids.length ? computeModeBaseline(grids, pixelCount, detection.modeBinCount) : new Float32Array(pixelCount),
-  );
+  const baselines: Float32Array[] = [];
+  for (const grids of gridsPerWindow) {
+    baselines.push(grids.length ? await computeModeBaseline(grids, pixelCount, detection.modeBinCount) : new Float32Array(pixelCount));
+  }
 
   return { baselines, windowOf };
 }
 
 /** Diffs each frame against its own time window's baseline. Splits the grid into primary/secondary halves along the configured orientation's axis. */
-function computeChangedRatioSeries(
+async function computeChangedRatioSeries(
   frames: CapturedFrame[],
   baselines: Float32Array[],
   windowOf: (timeMs: number) => number,
   detection: DetectionConfig,
-): RatioSample[] {
+): Promise<RatioSample[]> {
   const { sampleWidth, sampleHeight, pixelDeltaThreshold, orientation } = detection;
   const halfWidth = Math.floor(sampleWidth / 2);
   const halfHeight = Math.floor(sampleHeight / 2);
 
-  return frames.map(({ time, grid }) => {
+  const results: RatioSample[] = [];
+  for (let frameIndex = 0; frameIndex < frames.length; frameIndex += 1) {
+    const { time, grid } = frames[frameIndex];
     const baseline = baselines[windowOf(time)];
     let primaryChanged = 0;
     let secondaryChanged = 0;
@@ -279,12 +290,14 @@ function computeChangedRatioSeries(
         if (changed) secondaryChanged += 1;
       }
     }
-    return {
+    results.push({
       time,
       primaryRatio: primaryPixels ? primaryChanged / primaryPixels : 0,
       secondaryRatio: secondaryPixels ? secondaryChanged / secondaryPixels : 0,
-    };
-  });
+    });
+    if (frameIndex % YIELD_EVERY_N_FRAMES === 0) await yieldToMainThread();
+  }
+  return results;
 }
 
 type RawCandidate = {

@@ -69,5 +69,11 @@ export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
   // same ~150s clip — with multi-second gaps between captured frames). A
   // crossing lasts well under a second, so those gaps made most real passes
   // invisible. 1x trades processing speed for not dropping frames.
+  // Tried 2x as a speed-up (2026-06-28): frame count already dropped 21%
+  // (4239 -> 3356 on the same clip) and lap count regressed 23 -> 20 with
+  // the same merged-lap signature as the original 8x bug (two real laps
+  // collapsing into one ~8-10s reading). Even 2x isn't safe here — don't
+  // raise this without re-verifying against Circle Drill Test's ground
+  // truth clips first.
   playbackRate: 1,
 };
