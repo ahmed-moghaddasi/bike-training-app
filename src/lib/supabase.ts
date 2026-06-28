@@ -62,7 +62,9 @@ export async function saveSessionDraft(draft: SessionDraft, notes: string, video
   if (!supabase) throw new Error('Supabase is not configured.');
   const clientId = getClientId();
 
-  const times = draft.laps.map((lap) => lap.time);
+  // best/average/spread reflect scored laps only (warm-up/cool-down excluded);
+  // lap_count stays the total detected, so the two numbers can legitimately differ.
+  const times = draft.laps.filter((lap) => !lap.excludedFromScoring).map((lap) => lap.time);
   const bestLap = times.length ? Math.min(...times) : null;
   const averageLap = times.length ? times.reduce((sum, time) => sum + time, 0) / times.length : null;
   const spread = times.length ? Math.max(...times) - Math.min(...times) : null;

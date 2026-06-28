@@ -71,6 +71,63 @@ export type DetectionConfig = {
    * too, compounding the original miss instead of recovering from it.
    */
   duplicateDirectionWindowMs: number;
+  /**
+   * Absolute floor (in downsampled pixels) for the largest connected blob of
+   * changed pixels in whichever half just confirmed a crossing — rejects a
+   * single-pixel flicker or scattered noise that happens to add up to enough
+   * *total* changed pixels without ever forming one bike-sized region. 0
+   * disables this floor entirely (no real-footage value derived yet for a
+   * given drill — see drills/circle.ts for how this gets set once derived).
+   */
+  minBlobAreaPixels: number;
+  /**
+   * Once a few crossings are already confirmed this session, a new
+   * candidate's peak blob area must be at least this fraction of the
+   * rolling median of those prior confirmed crossings' peak blob areas.
+   * This is the actual self-calibration: it judges new passes against what
+   * a real pass looked like earlier in *this* footage (whatever the bike
+   * size, camera distance, or speed happens to be), not a fixed global
+   * number that would break the moment any of those things change.
+   *
+   * Tested at 0.35 against the ground-truth clips (2026-06-28): caused real
+   * regressions, because the earliest confirmed crossings (still within the
+   * excluded warm-up lap, where the rider is still settling into their line
+   * and pace) can have larger-than-steady-state blobs, biasing the rolling
+   * median high and then unfairly rejecting genuinely smaller (but real)
+   * crossings once the rider speeds up. 0.2 gives enough margin for normal
+   * pace variation across a session without losing the "obviously not the
+   * bike" rejection this exists for.
+   */
+  minBlobAreaFraction: number;
+  /** How many confirmed crossings to keep in the rolling-median window. */
+  blobCalibrationWindowSize: number;
+  /**
+   * How many crossings must already be confirmed before the relative
+   * (minBlobAreaFraction) check kicks in — before that there's no session
+   * baseline yet, so only the absolute floor applies. The warm-up lap
+   * (see lapDetector.ts's markWarmupAndCooldownLaps) means this naturally
+   * lines up with "laps that don't count anyway."
+   */
+  blobCalibrationBootstrapCount: number;
+  /**
+   * A high-contrast sticker/marker on the bike, tracked by color instead of
+   * generic brightness change — much less sensitive to ambient lighting
+   * (shadows, glare) than luminance diffing alone. A pixel counts as
+   * "changed" if it matches this color OR the luminance check fires (an OR,
+   * not a replacement) — so if the marker gets briefly blocked by the
+   * rider's body, the brightness signal still covers that pass; the marker
+   * only has to help, never hurt.
+   *
+   * null disables this entirely (the default everywhere, including Circle)
+   * until a real sticker is bought and its color measured — TODO once you
+   * have one: open the debug reprocess tool (?debug=reprocess) on a clip
+   * that clearly shows the marker, note roughly where in the zone it
+   * crosses, and sample that pixel's color (e.g. via your OS's color
+   * picker on a paused video frame, or a quick script) to get hue/
+   * saturation. Start with a generous hueToleranceDegrees (~20-30) and
+   * tighten only if it's matching things it shouldn't.
+   */
+  markerColor: { hue: number; hueToleranceDegrees: number; minSaturation: number } | null;
 };
 
 export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
@@ -89,6 +146,11 @@ export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
   modeBinCount: 32,
   baselineWindowSeconds: 12,
   duplicateDirectionWindowMs: 0,
+  minBlobAreaPixels: 0,
+  minBlobAreaFraction: 0.2,
+  blobCalibrationWindowSize: 8,
+  blobCalibrationBootstrapCount: 2,
+  markerColor: null,
   // 8x caused the browser to drop the vast majority of decoded frames during
   // requestVideoFrameCallback (verified: re-running the same clip at 8x
   // produced a different frame count each time — 577 vs 1149 frames over the

@@ -744,7 +744,7 @@ function SessionSummaryScreen({
         ? job.saveError ?? 'Could not save the session.'
         : null);
   const summaryLaps = draft ? resolvedLaps : mockLaps;
-  const times = summaryLaps.map((lap) => lap.time);
+  const times = summaryLaps.filter((lap) => !lap.excludedFromScoring).map((lap) => lap.time);
   const best = times.length ? Math.min(...times) : undefined;
   const avg = times.length ? times.reduce((sum, lap) => sum + lap, 0) / times.length : undefined;
   const spread = times.length ? Math.max(...times) - Math.min(...times) : undefined;
@@ -1559,17 +1559,23 @@ function MetricMini({ label, value }: { label: string; value: string }) {
   );
 }
 
-function LapList({ laps }: { laps: { lapNumber: number; time: number }[] }) {
-  const best = Math.min(...laps.map((lap) => lap.time));
+function LapList({ laps }: { laps: { lapNumber: number; time: number; excludedFromScoring?: boolean }[] }) {
+  const scoredTimes = laps.filter((lap) => !lap.excludedFromScoring).map((lap) => lap.time);
+  const best = scoredTimes.length ? Math.min(...scoredTimes) : undefined;
   return (
     <View style={styles.lapList}>
-      {laps.map((lap) => (
-        <View key={lap.lapNumber} style={[styles.lapRow, lap.time === best && styles.lapRowBest]}>
-          <Text style={[styles.lapNum, lap.time === best && styles.lapTextBest]}>L{lap.lapNumber}</Text>
-          <Text style={[styles.lapTime, lap.time === best && styles.lapTextBest]}>{formatLap(lap.time)}</Text>
-          {lap.time === best && <Text style={styles.pbText}>PB</Text>}
-        </View>
-      ))}
+      {laps.map((lap, index) => {
+        const isBest = !lap.excludedFromScoring && lap.time === best;
+        const tag = lap.excludedFromScoring ? (index === 0 ? 'Warm-up' : 'Cool-down') : undefined;
+        return (
+          <View key={lap.lapNumber} style={[styles.lapRow, isBest && styles.lapRowBest]}>
+            <Text style={[styles.lapNum, isBest && styles.lapTextBest]}>L{lap.lapNumber}</Text>
+            <Text style={[styles.lapTime, isBest && styles.lapTextBest]}>{formatLap(lap.time)}</Text>
+            {isBest && <Text style={styles.pbText}>PB</Text>}
+            {tag && <Text style={styles.lapTag}>{tag}</Text>}
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -2178,6 +2184,14 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: 11,
     fontWeight: '800',
+  },
+  lapTag: {
+    color: colors.silverDark,
+    fontFamily: fonts.display,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
   },
   filterRow: {
     flexDirection: 'row',

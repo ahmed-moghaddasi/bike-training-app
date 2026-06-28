@@ -65,6 +65,8 @@ export type Lap = {
   lapNumber: number;
   time: number;
   timestampInVideo?: number;
+  /** Warm-up (first lap) or cool-down (last lap) — shown to the rider but left out of best/average/spread. */
+  excludedFromScoring?: boolean;
 };
 
 export type DetectionEvent = {

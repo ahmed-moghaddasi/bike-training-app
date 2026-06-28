@@ -1,4 +1,4 @@
-import { downsampleLuminance } from './frameSampling';
+import { downsampleLuminance, downsampleMarkerMatch } from './frameSampling';
 import { computeCropRectRatio } from './detection/geometry';
 import type { CrossingOrientation, DetectionConfig } from './detection/types';
 import type { DetectionEvent, Lap } from '../types';
@@ -16,7 +16,13 @@ export type LapDetectionResult = {
   diagnostics: LapDetectionDiagnostics;
 };
 
-export type CandidateOutcome = 'confirmed' | 'sequence-timeout' | 'decay-failed' | 'suppressed-by-cooldown' | 'duplicate-direction';
+export type CandidateOutcome =
+  | 'confirmed'
+  | 'sequence-timeout'
+  | 'decay-failed'
+  | 'suppressed-by-cooldown'
+  | 'duplicate-direction'
+  | 'blob-too-small';
 
 /**
  * 'primary'/'secondary' map to the two halves of whichever axis the drill's
@@ -42,11 +48,11 @@ export type LapDetectionDiagnostics = {
   /** Every candidate sequence the detector noticed, and why it was kept or dropped. */
   candidates: CandidateLog[];
   /** Full per-frame signal, downsampled to at most ~500 points so the export stays small. */
-  series: Array<{ timeSeconds: number; primaryRatio: number; secondaryRatio: number }>;
+  series: Array<{ timeSeconds: number; primaryRatio: number; secondaryRatio: number; primaryBlobArea: number; secondaryBlobArea: number }>;
 };
 
-type CapturedFrame = { time: number; grid: Float32Array };
-type RatioSample = { time: number; primaryRatio: number; secondaryRatio: number };
+type CapturedFrame = { time: number; grid: Float32Array; markerMatch?: Uint8Array };
+type RatioSample = { time: number; primaryRatio: number; secondaryRatio: number; primaryBlobArea: number; secondaryBlobArea: number };
 type Crossing = { time: number; direction: 'primary-to-secondary' | 'secondary-to-primary'; score: number };
 
 type VideoWithFrameCallback = HTMLVideoElement & {
@@ -84,6 +90,7 @@ export async function detectLapsFromVideo(videoUri: string, config: LapDetection
   const series = await computeChangedRatioSeries(frames, baselines, windowOf, detection);
   const { crossings, candidates } = detectCrossings(series, detection);
   const result = reduceCrossingsToLaps(crossings, Math.max(1, config.detectionsPerLap), config.recordingStartedAt);
+  result.laps = markWarmupAndCooldownLaps(result.laps);
 
   const diagnostics: LapDetectionDiagnostics = {
     frameCount: frames.length,
@@ -102,6 +109,8 @@ export async function detectLapsFromVideo(videoUri: string, config: LapDetection
       timeSeconds: sample.time / 1000,
       primaryRatio: sample.primaryRatio,
       secondaryRatio: sample.secondaryRatio,
+      primaryBlobArea: sample.primaryBlobArea,
+      secondaryBlobArea: sample.secondaryBlobArea,
     })),
   };
 
@@ -146,8 +155,15 @@ function extractFrames(videoUri: string, detection: DetectionConfig): Promise<Ca
       context.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, detection.sampleWidth, detection.sampleHeight);
 
       const imageData = context.getImageData(0, 0, detection.sampleWidth, detection.sampleHeight);
+      const markerMatch = detection.markerColor
+        ? downsampleMarkerMatch(imageData, detection.sampleWidth, detection.sampleHeight, detection.markerColor)
+        : undefined;
       // Stored in ms (video time * 1000) so they compare directly against the *Ms thresholds below.
-      frames.push({ time: mediaTime * 1000, grid: downsampleLuminance(imageData, detection.sampleWidth, detection.sampleHeight) });
+      frames.push({
+        time: mediaTime * 1000,
+        grid: downsampleLuminance(imageData, detection.sampleWidth, detection.sampleHeight),
+        markerMatch,
+      });
     }
 
     function finish() {
@@ -259,6 +275,48 @@ async function computeWindowedBaselines(
   return { baselines, windowOf };
 }
 
+/**
+ * Size (pixel count) of the largest 4-connected region of `mask` — used to
+ * tell "one coherent bike-sized blob changed" from "scattered noise pixels
+ * that happen to add up to the same total count." `mask`/`visited` are
+ * reused across frames by the caller to avoid reallocating per frame.
+ */
+function largestBlobArea(mask: Uint8Array, visited: Uint8Array, width: number, height: number): number {
+  visited.fill(0);
+  let largest = 0;
+  const stack: number[] = [];
+  for (let start = 0; start < mask.length; start += 1) {
+    if (!mask[start] || visited[start]) continue;
+    stack.push(start);
+    visited[start] = 1;
+    let size = 0;
+    while (stack.length) {
+      const index = stack.pop()!;
+      size += 1;
+      const x = index % width;
+      const y = (index - x) / width;
+      if (x > 0 && mask[index - 1] && !visited[index - 1]) {
+        visited[index - 1] = 1;
+        stack.push(index - 1);
+      }
+      if (x < width - 1 && mask[index + 1] && !visited[index + 1]) {
+        visited[index + 1] = 1;
+        stack.push(index + 1);
+      }
+      if (y > 0 && mask[index - width] && !visited[index - width]) {
+        visited[index - width] = 1;
+        stack.push(index - width);
+      }
+      if (y < height - 1 && mask[index + width] && !visited[index + width]) {
+        visited[index + width] = 1;
+        stack.push(index + width);
+      }
+    }
+    if (size > largest) largest = size;
+  }
+  return largest;
+}
+
 /** Diffs each frame against its own time window's baseline. Splits the grid into primary/secondary halves along the configured orientation's axis. */
 async function computeChangedRatioSeries(
   frames: CapturedFrame[],
@@ -269,31 +327,49 @@ async function computeChangedRatioSeries(
   const { sampleWidth, sampleHeight, pixelDeltaThreshold, orientation } = detection;
   const halfWidth = Math.floor(sampleWidth / 2);
   const halfHeight = Math.floor(sampleHeight / 2);
+  const pixelCount = sampleWidth * sampleHeight;
+  const primaryMask = new Uint8Array(pixelCount);
+  const secondaryMask = new Uint8Array(pixelCount);
+  const visited = new Uint8Array(pixelCount);
 
   const results: RatioSample[] = [];
   for (let frameIndex = 0; frameIndex < frames.length; frameIndex += 1) {
-    const { time, grid } = frames[frameIndex];
+    const { time, grid, markerMatch } = frames[frameIndex];
     const baseline = baselines[windowOf(time)];
     let primaryChanged = 0;
     let secondaryChanged = 0;
     let primaryPixels = 0;
     let secondaryPixels = 0;
+    primaryMask.fill(0);
+    secondaryMask.fill(0);
     for (let index = 0; index < grid.length; index += 1) {
-      const changed = Math.abs(grid[index] - baseline[index]) >= pixelDeltaThreshold;
+      // OR, not replace: the marker (when configured) cleans up false positives
+      // when visible, while luminance still catches a pass if the marker gets
+      // briefly blocked by the rider's body — neither signal alone has to be perfect.
+      const lumaChanged = Math.abs(grid[index] - baseline[index]) >= pixelDeltaThreshold;
+      const changed = lumaChanged || (markerMatch ? markerMatch[index] === 1 : false);
       const isPrimary =
         orientation === 'vertical' ? index % sampleWidth < halfWidth : Math.floor(index / sampleWidth) < halfHeight;
       if (isPrimary) {
         primaryPixels += 1;
-        if (changed) primaryChanged += 1;
+        if (changed) {
+          primaryChanged += 1;
+          primaryMask[index] = 1;
+        }
       } else {
         secondaryPixels += 1;
-        if (changed) secondaryChanged += 1;
+        if (changed) {
+          secondaryChanged += 1;
+          secondaryMask[index] = 1;
+        }
       }
     }
     results.push({
       time,
       primaryRatio: primaryPixels ? primaryChanged / primaryPixels : 0,
       secondaryRatio: secondaryPixels ? secondaryChanged / secondaryPixels : 0,
+      primaryBlobArea: largestBlobArea(primaryMask, visited, sampleWidth, sampleHeight),
+      secondaryBlobArea: largestBlobArea(secondaryMask, visited, sampleWidth, sampleHeight),
     });
     if (frameIndex % YIELD_EVERY_N_FRAMES === 0) await yieldToMainThread();
   }
@@ -309,7 +385,18 @@ type RawCandidate = {
 
 /** Asymmetric crossing sequence (one half activates, then the other), same idea as the old live detector, evaluated over the whole series. */
 function detectCrossings(series: RatioSample[], detection: DetectionConfig): { crossings: Crossing[]; candidates: RawCandidate[] } {
-  const { changedRatioThreshold, minActiveMs, cooldownMs, sequenceTimeoutMs, decayWindowMs, duplicateDirectionWindowMs } = detection;
+  const {
+    changedRatioThreshold,
+    minActiveMs,
+    cooldownMs,
+    sequenceTimeoutMs,
+    decayWindowMs,
+    duplicateDirectionWindowMs,
+    minBlobAreaPixels,
+    minBlobAreaFraction,
+    blobCalibrationWindowSize,
+    blobCalibrationBootstrapCount,
+  } = detection;
   const crossings: Crossing[] = [];
   const candidates: RawCandidate[] = [];
   let primaryActiveSince: number | null = null;
@@ -320,6 +407,24 @@ function detectCrossings(series: RatioSample[], detection: DetectionConfig): { c
   let lastConfirmedDirection: Crossing['direction'] | null = null;
   let cooldownActivityStart: number | null = null;
   let cooldownActivityHalf: 'primary' | 'secondary' | 'both' | null = null;
+  // Self-calibration: judges a new crossing's blob size against what real
+  // crossings looked like earlier in this same clip, not a fixed global
+  // number — stays accurate regardless of bike size, camera distance, or
+  // speed. See DetectionConfig.minBlobAreaFraction.
+  const recentConfirmedBlobAreas: number[] = [];
+
+  function isBlobLargeEnough(peakBlobArea: number): boolean {
+    if (peakBlobArea < minBlobAreaPixels) return false;
+    if (recentConfirmedBlobAreas.length < blobCalibrationBootstrapCount) return true;
+    const sorted = [...recentConfirmedBlobAreas].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    return peakBlobArea >= median * minBlobAreaFraction;
+  }
+
+  function recordConfirmedBlobArea(peakBlobArea: number) {
+    recentConfirmedBlobAreas.push(peakBlobArea);
+    if (recentConfirmedBlobAreas.length > blobCalibrationWindowSize) recentConfirmedBlobAreas.shift();
+  }
 
   function flushCooldownActivity() {
     if (cooldownActivityStart === null) return;
@@ -380,13 +485,22 @@ function detectCrossings(series: RatioSample[], detection: DetectionConfig): { c
       primaryActiveSince = null;
       secondaryActiveSince = null;
     } else if (direction && decaysWithinWindow(series, i, changedRatioThreshold, decayWindowMs)) {
-      crossings.push({ time, direction, score: Math.max(primaryRatio, secondaryRatio) / changedRatioThreshold });
-      candidates.push({ half: pendingHalf!, startTime: pendingSince, outcome: 'confirmed', confirmedAt: time });
-      lastCrossingAt = time;
-      lastConfirmedDirection = direction;
-      pendingHalf = null;
-      primaryActiveSince = null;
-      secondaryActiveSince = null;
+      const peakBlobArea = Math.max(series[i].primaryBlobArea, series[i].secondaryBlobArea);
+      if (isBlobLargeEnough(peakBlobArea)) {
+        crossings.push({ time, direction, score: Math.max(primaryRatio, secondaryRatio) / changedRatioThreshold });
+        candidates.push({ half: pendingHalf!, startTime: pendingSince, outcome: 'confirmed', confirmedAt: time });
+        lastCrossingAt = time;
+        lastConfirmedDirection = direction;
+        recordConfirmedBlobArea(peakBlobArea);
+        pendingHalf = null;
+        primaryActiveSince = null;
+        secondaryActiveSince = null;
+      } else {
+        // Changed pixels never formed one bike-sized region — likely scattered
+        // noise (dust, grass motion) rather than the bike itself.
+        candidates.push({ half: pendingHalf!, startTime: pendingSince, outcome: 'blob-too-small', confirmedAt: time });
+        pendingHalf = null;
+      }
     } else if (direction) {
       // Confirmed sequence but motion never decayed — likely sustained drift, not a real pass.
       candidates.push({ half: pendingHalf!, startTime: pendingSince, outcome: 'decay-failed', confirmedAt: time });
@@ -464,4 +578,19 @@ function reduceCrossingsToLaps(
   }
 
   return { laps, detectionEvents };
+}
+
+/**
+ * The circle drill is ridden as fast as possible, with the first lap or two
+ * spent getting up to speed and the last lap winding down — neither
+ * represents a real effort, so they're flagged out of scoring (best/average/
+ * spread) but kept visible in the lap list. Only applied when there are
+ * enough laps that excluding both ends still leaves at least one scored lap.
+ */
+function markWarmupAndCooldownLaps(laps: Lap[]): Lap[] {
+  if (laps.length <= 2) return laps;
+  return laps.map((lap, index) => {
+    if (index === 0 || index === laps.length - 1) return { ...lap, excludedFromScoring: true };
+    return lap;
+  });
 }
