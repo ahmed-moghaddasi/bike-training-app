@@ -63,5 +63,11 @@ export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
   decayWindowMs: 1_000,
   modeBinCount: 32,
   baselineWindowSeconds: 12,
-  playbackRate: 8,
+  // 8x caused the browser to drop the vast majority of decoded frames during
+  // requestVideoFrameCallback (verified: re-running the same clip at 8x
+  // produced a different frame count each time — 577 vs 1149 frames over the
+  // same ~150s clip — with multi-second gaps between captured frames). A
+  // crossing lasts well under a second, so those gaps made most real passes
+  // invisible. 1x trades processing speed for not dropping frames.
+  playbackRate: 1,
 };
