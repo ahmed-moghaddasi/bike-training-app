@@ -666,6 +666,41 @@ function WebCameraTimer({
   );
 }
 
+/** How long the flash stays visible after the video reaches a detection event's timestamp. */
+const LAP_FLASH_WINDOW_SECONDS = 0.5;
+
+/**
+ * Overlays a brief flash on a video preview exactly when playback crosses a
+ * detected crossing's timestamp, so watching the clip back makes it obvious
+ * where the detector fired versus where the rider thinks a lap happened.
+ */
+function LapFlashOverlay({ videoRef, events }: { videoRef: React.RefObject<HTMLVideoElement | null>; events: DetectionEvent[] }) {
+  const [activeLabel, setActiveLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || events.length === 0) {
+      setActiveLabel(null);
+      return;
+    }
+    function handleTimeUpdate() {
+      const t = video!.currentTime;
+      const match = events.find((event) => t >= event.videoTimestamp && t - event.videoTimestamp < LAP_FLASH_WINDOW_SECONDS);
+      setActiveLabel(match ? (match.eventType === 'lapDetected' ? `LAP ${match.lapNumber}` : 'START') : null);
+    }
+    video.addEventListener('timeupdate', handleTimeUpdate);
+    return () => video.removeEventListener('timeupdate', handleTimeUpdate);
+  }, [videoRef, events]);
+
+  if (!activeLabel) return null;
+
+  return (
+    <View style={styles.lapFlashOverlay} pointerEvents="none">
+      <Text style={styles.lapFlashText}>{activeLabel}</Text>
+    </View>
+  );
+}
+
 function SessionSummaryScreen({
   drillId,
   currentBike,
@@ -852,18 +887,21 @@ function SessionSummaryScreen({
           <Text style={[styles.bodyText, styles.saveMessageError]}>Could not analyze this recording for laps. The video is still available below.</Text>
         )}
         {draft?.videoUri && Platform.OS === 'web' ? (
-          React.createElement('video', {
-            ref: previewVideoRef,
-            src: draft.videoUri,
-            controls: true,
-            playsInline: true,
-            style: {
-              backgroundColor: colors.black,
-              borderRadius: radius.md,
-              display: 'block',
-              width: '100%',
-            },
-          })
+          <View style={styles.videoPreviewWrapper}>
+            {React.createElement('video', {
+              ref: previewVideoRef,
+              src: draft.videoUri,
+              controls: true,
+              playsInline: true,
+              style: {
+                backgroundColor: colors.black,
+                borderRadius: radius.md,
+                display: 'block',
+                width: '100%',
+              },
+            })}
+            <LapFlashOverlay videoRef={previewVideoRef} events={resolvedEvents} />
+          </View>
         ) : (
           <Text style={styles.bodyText}>{draft ? 'Video was not recorded for this run.' : 'Saved · placeholder recording attached to this mock session.'}</Text>
         )}
@@ -953,6 +991,7 @@ function DebugReprocessScreen() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'uploaded' | 'error'>('idle');
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const drill = drills.find((item) => item.id === selectedDrillId) ?? drills[0];
   const times = laps.map((lap) => lap.time);
@@ -1070,12 +1109,16 @@ function DebugReprocessScreen() {
           })}
         {fileName && <Text style={styles.bodyText}>{fileName}</Text>}
         {videoUri && Platform.OS === 'web' && (
-          React.createElement('video', {
-            src: videoUri,
-            controls: true,
-            playsInline: true,
-            style: { backgroundColor: colors.black, borderRadius: radius.md, display: 'block', marginTop: 12, width: '100%' },
-          })
+          <View style={[styles.videoPreviewWrapper, { marginTop: 12 }]}>
+            {React.createElement('video', {
+              ref: previewVideoRef,
+              src: videoUri,
+              controls: true,
+              playsInline: true,
+              style: { backgroundColor: colors.black, borderRadius: radius.md, display: 'block', width: '100%' },
+            })}
+            <LapFlashOverlay videoRef={previewVideoRef} events={events} />
+          </View>
         )}
       </Section>
 
@@ -1563,6 +1606,26 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     fontSize: 13,
     fontWeight: '700',
+  },
+  videoPreviewWrapper: {
+    position: 'relative',
+  },
+  lapFlashOverlay: {
+    backgroundColor: colors.green,
+    borderRadius: radius.pill,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    position: 'absolute',
+    right: 12,
+    top: 12,
+  },
+  lapFlashText: {
+    color: colors.white,
+    fontFamily: fonts.display,
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
   },
   page: {
     paddingHorizontal: spacing.pageX,
