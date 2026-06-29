@@ -95,23 +95,25 @@ export type SessionDraft = {
 };
 
 /**
- * A lap-detection run for one recorded draft, owned by App (not by whichever
- * screen happens to be mounted) so navigating away from Session Summary
- * doesn't kill the in-flight detectLapsFromVideo call or the save that
- * follows it. See JobRunner in App.tsx.
+ * One recorded draft's hand-off to server-side processing, owned by App (not
+ * by whichever screen happens to be mounted) so navigating away from Session
+ * Summary doesn't interrupt the upload or the trigger call. Lap detection
+ * itself now happens out-of-process (GitHub Actions worker) — this job only
+ * tracks getting the video there, not the detection result. The actual laps
+ * show up later via loadSavedSessions() the next time Sessions is opened.
+ * See JobRunner in App.tsx.
  */
 export type ProcessingJob = {
   id: string;
   drillId: string;
   draft: SessionDraft;
-  status: 'extracting' | 'done' | 'error';
-  laps: Lap[];
-  detectionEvents: DetectionEvent[];
-  diagnostics?: unknown;
+  status: 'uploading' | 'queued' | 'error';
+  /** Set once the pending `sessions` row is created — needed before notes can be attached. */
+  sessionId?: string;
   errorMessage?: string;
-  /** Notes typed on Session Summary before the user chose to save without waiting. */
+  /** Notes typed on Session Summary before the user chose to save without waiting for upload to finish. */
   notes: string;
-  /** Set when the user taps Save Session while status is still 'extracting' — JobRunner saves automatically once detection resolves. */
+  /** Set when the user taps Save Session — JobRunner attaches notes once a sessionId exists. */
   saveRequested: boolean;
   saveStatus: 'idle' | 'saving' | 'saved' | 'error';
   saveError?: string;
@@ -128,6 +130,9 @@ export type Session = {
   videoSaved: boolean;
   notes?: string;
   conditions?: string;
+  /** Server-side processing state — undefined for the seed/mock sessions, which are always 'ready'. */
+  status?: 'ready' | 'queued' | 'processing' | 'error';
+  errorMessage?: string;
 };
 
 export type ProgressContext = {

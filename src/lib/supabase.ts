@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import type { DetectionEvent, Lap, SessionDraft } from '../types';
+import type { Lap, SessionDraft } from '../types';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -10,6 +10,8 @@ export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl as string, supabaseAnonKey as string)
   : undefined;
 
+export type SessionStatus = 'ready' | 'queued' | 'processing' | 'error';
+
 export type SavedSession = {
   id: string;
   date: string;
@@ -19,6 +21,8 @@ export type SavedSession = {
   videoSaved: boolean;
   notes?: string;
   laps: Lap[];
+  status: SessionStatus;
+  errorMessage?: string;
 };
 
 type SavedSessionRow = {
@@ -29,6 +33,8 @@ type SavedSessionRow = {
   setup_variant_id: string;
   video_saved: boolean;
   notes: string | null;
+  status: SessionStatus;
+  error_message: string | null;
   laps: Array<{
     lap_number: number;
     time: number;
@@ -36,12 +42,7 @@ type SavedSessionRow = {
   }>;
 };
 
-export type SaveSessionResult = {
-  sessionId: string;
-  videoSaved: boolean;
-};
-
-function createId() {
+export function createId() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID();
   }
@@ -58,73 +59,85 @@ function getClientId() {
   return next;
 }
 
-export async function saveSessionDraft(draft: SessionDraft, notes: string, videoSavedLocally: boolean) {
+/**
+ * Creates the `sessions` row before any laps are known — lap detection now
+ * happens out-of-process (see server/), so there's no longer a single
+ * "insert everything at once" save. id is generated client-side (createId)
+ * rather than left to the DB default so the row can exist while the video
+ * upload (which can take a while for a long recording) is still in flight.
+ */
+export async function createPendingSession(sessionId: string, draft: SessionDraft): Promise<void> {
   if (!supabase) throw new Error('Supabase is not configured.');
-  const clientId = getClientId();
+  const { error } = await supabase.from('sessions').insert({
+    id: sessionId,
+    client_id: getClientId(),
+    date: draft.endedAt,
+    started_at: draft.startedAt,
+    bike_id: draft.bikeId,
+    drill_id: draft.drillId,
+    setup_variant_id: draft.setupVariantId,
+    video_path: null,
+    video_saved: false,
+    status: 'queued',
+    lap_count: 0,
+  });
+  if (error) throw error;
+}
 
-  // best/average/spread reflect scored laps only (warm-up/cool-down excluded);
-  // lap_count stays the total detected, so the two numbers can legitimately differ.
-  const times = draft.laps.filter((lap) => !lap.excludedFromScoring).map((lap) => lap.time);
-  const bestLap = times.length ? Math.min(...times) : null;
-  const averageLap = times.length ? times.reduce((sum, time) => sum + time, 0) / times.length : null;
-  const spread = times.length ? Math.max(...times) - Math.min(...times) : null;
+/**
+ * Uploads the recorded video to temporary staging storage. The bucket's RLS
+ * only permits an anon-key client to write under the literal 'anonymous/'
+ * prefix (not a client_id-scoped path) — every device currently shares that
+ * namespace for Storage purposes, fine for single-rider use.
+ */
+export async function uploadSessionVideo(sessionId: string, blob: Blob): Promise<string> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const extension = blob.type.includes('webm') ? 'webm' : 'mp4';
+  const path = `anonymous/${sessionId}.${extension}`;
+  const { error } = await supabase.storage.from('session-videos').upload(path, blob, {
+    contentType: blob.type || 'video/mp4',
+    upsert: false,
+  });
+  if (error) throw error;
+  return path;
+}
 
-  const { data: session, error: sessionError } = await supabase
-    .from('sessions')
-    .insert({
-      client_id: clientId,
-      date: draft.endedAt,
-      bike_id: draft.bikeId,
-      drill_id: draft.drillId,
-      setup_variant_id: draft.setupVariantId,
-      video_path: null,
-      video_saved: videoSavedLocally,
-      notes: notes.trim() || null,
-      best_lap: bestLap,
-      average_lap: averageLap,
-      spread,
-      lap_count: draft.laps.length,
-    })
-    .select('id')
-    .single();
+export async function attachVideoStoragePath(sessionId: string, path: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('sessions').update({ video_storage_path: path }).eq('id', sessionId);
+  if (error) throw error;
+}
 
-  if (sessionError) throw sessionError;
+/** Kicks off the GitHub Actions worker via a Supabase Edge Function that holds the GitHub credential server-side. */
+export async function triggerServerProcessing(sessionId: string, drillId: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.functions.invoke('trigger-lap-processing', { body: { sessionId, drillId } });
+  if (error) throw error;
+}
 
-  if (draft.laps.length > 0) {
-    const { error: lapsError } = await supabase.from('laps').insert(
-      draft.laps.map((lap) => ({
-        session_id: session.id,
-        lap_number: lap.lapNumber,
-        time: lap.time,
-        timestamp_in_video: lap.timestampInVideo ?? null,
-      }))
-    );
-    if (lapsError) throw lapsError;
-  }
+export async function attachSessionNotes(sessionId: string, notes: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { error } = await supabase.from('sessions').update({ notes: notes.trim() || null }).eq('id', sessionId);
+  if (error) throw error;
+}
 
-  if (draft.detectionEvents.length > 0) {
-    const { error: detectionError } = await supabase.from('detection_events').insert(
-      draft.detectionEvents.map((event: DetectionEvent) => ({
-        session_id: session.id,
-        event_type: event.eventType,
-        detected_at: event.detectedAt,
-        video_timestamp: event.videoTimestamp,
-        lap_number: event.lapNumber ?? null,
-        score: event.score ?? null,
-      }))
-    );
-    if (detectionError) throw detectionError;
-  }
-
-  const sessionId = session.id as string;
-  return { sessionId, videoSaved: videoSavedLocally } satisfies SaveSessionResult;
+/**
+ * Best-effort: marks a session row failed when the upload/trigger sequence
+ * breaks on the client before the GitHub workflow (which owns this same
+ * transition on success/failure server-side) ever starts. Without this, a
+ * trigger call that fails before reaching GitHub would leave the row stuck
+ * on 'queued' forever with nothing to ever flip it to 'error'.
+ */
+export async function markSessionError(sessionId: string, message: string): Promise<void> {
+  if (!supabase) return;
+  await supabase.from('sessions').update({ status: 'error', error_message: message }).eq('id', sessionId);
 }
 
 export async function loadSavedSessions(): Promise<SavedSession[]> {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { data, error } = await supabase
     .from('sessions')
-    .select('id,date,bike_id,drill_id,setup_variant_id,video_saved,notes,laps(lap_number,time,timestamp_in_video)')
+    .select('id,date,bike_id,drill_id,setup_variant_id,video_saved,notes,status,error_message,laps(lap_number,time,timestamp_in_video)')
     .order('date', { ascending: false });
 
   if (error) throw error;
@@ -137,6 +150,8 @@ export async function loadSavedSessions(): Promise<SavedSession[]> {
     setupVariantId: session.setup_variant_id,
     videoSaved: session.video_saved,
     notes: session.notes ?? undefined,
+    status: session.status,
+    errorMessage: session.error_message ?? undefined,
     laps: session.laps
       .slice()
       .sort((a, b) => a.lap_number - b.lap_number)

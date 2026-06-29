@@ -1,0 +1,48 @@
+name: Lap detection
+
+on:
+  repository_dispatch:
+    types: [lap-detection-process]
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Ensure ffmpeg is available
+        run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      - name: Install worker dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Process session
+        working-directory: server
+        env:
+          SESSION_ID: ${{ github.event.client_payload.sessionId }}
+          DRILL_ID: ${{ github.event.client_payload.drillId }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npx tsx process-session.ts
+
+      # Backstop: process-session.ts marks the row 'error' itself on any
+      # caught failure, but this covers cases that crash before that catch
+      # ever runs (e.g. npm ci failing, the runner dying mid-job).
+      - name: Mark session as failed if the job didn't already handle it
+        if: failure()
+        env:
+          SESSION_ID: ${{ github.event.client_payload.sessionId }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          curl -s -X PATCH "$SUPABASE_URL/rest/v1/sessions?id=eq.$SESSION_ID&status=neq.ready" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"status":"error","error_message":"Workflow failed before the worker could report a specific error — check the GitHub Actions run log."}'

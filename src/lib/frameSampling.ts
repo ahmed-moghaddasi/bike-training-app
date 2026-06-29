@@ -1,5 +1,18 @@
+/**
+ * The minimal shape these functions actually need from an RGBA frame —
+ * deliberately not the DOM's global ImageData type, so the exact same code
+ * runs against a browser canvas frame (ImageData satisfies this structurally)
+ * and a Node Buffer-backed frame from the server-side ffmpeg worker, with no
+ * DOM dependency in this file at all.
+ */
+export type FrameBuffer = {
+  width: number;
+  height: number;
+  data: { length: number; [index: number]: number };
+};
+
 /** Maps a downsampled (x, y) coordinate back to the source frame's RGBA byte index. Shared so luminance and marker-color sampling read the exact same source pixel. */
-function sourceByteIndex(x: number, y: number, sampleWidth: number, sampleHeight: number, frame: ImageData): number {
+function sourceByteIndex(x: number, y: number, sampleWidth: number, sampleHeight: number, frame: FrameBuffer): number {
   const sourceY = Math.min(frame.height - 1, Math.floor(((y + 0.5) * frame.height) / sampleHeight));
   const sourceX = Math.min(frame.width - 1, Math.floor(((x + 0.5) * frame.width) / sampleWidth));
   return (sourceY * frame.width + sourceX) * 4;
@@ -10,7 +23,7 @@ function sourceByteIndex(x: number, y: number, sampleWidth: number, sampleHeight
  * Shared by the offline lap detector; used to keep one frame-math implementation
  * instead of duplicating it between a live detector and a post-processing one.
  */
-export function downsampleLuminance(frame: ImageData, sampleWidth: number, sampleHeight: number): Float32Array {
+export function downsampleLuminance(frame: FrameBuffer, sampleWidth: number, sampleHeight: number): Float32Array {
   if (frame.width < 1 || frame.height < 1 || frame.data.length < frame.width * frame.height * 4) {
     throw new Error('downsampleLuminance requires non-empty RGBA ImageData.');
   }
@@ -52,7 +65,7 @@ export type MarkerColor = { hue: number; hueToleranceDegrees: number; minSaturat
  * mostly ignores ambient lighting changes (shadows, glare). Only meaningful
  * once a real marker color is configured; see DetectionConfig.markerColor.
  */
-export function downsampleMarkerMatch(frame: ImageData, sampleWidth: number, sampleHeight: number, markerColor: MarkerColor): Uint8Array {
+export function downsampleMarkerMatch(frame: FrameBuffer, sampleWidth: number, sampleHeight: number, markerColor: MarkerColor): Uint8Array {
   const output = new Uint8Array(sampleWidth * sampleHeight);
   for (let y = 0; y < sampleHeight; y += 1) {
     for (let x = 0; x < sampleWidth; x += 1) {

@@ -51,9 +51,19 @@ export type LapDetectionDiagnostics = {
   series: Array<{ timeSeconds: number; primaryRatio: number; secondaryRatio: number; primaryBlobArea: number; secondaryBlobArea: number }>;
 };
 
-type CapturedFrame = { time: number; grid: Float32Array; markerMatch?: Uint8Array };
+export type CapturedFrame = { time: number; grid: Float32Array; markerMatch?: Uint8Array };
 type RatioSample = { time: number; primaryRatio: number; secondaryRatio: number; primaryBlobArea: number; secondaryBlobArea: number };
 type Crossing = { time: number; direction: 'primary-to-secondary' | 'secondary-to-primary'; score: number };
+
+/**
+ * Decodes a video into per-frame luminance/marker grids. The browser
+ * implementation (extractFrames, below) is the default; the server-side
+ * worker (server/) injects an ffmpeg-backed one with the exact same shape so
+ * the rest of this pipeline (baseline, ratios, crossing detection, blob
+ * filter, marker matching) runs identically regardless of where frames came
+ * from — none of that logic is DOM-dependent.
+ */
+export type FrameExtractor = (videoUri: string, detection: DetectionConfig) => Promise<CapturedFrame[]>;
 
 type VideoWithFrameCallback = HTMLVideoElement & {
   requestVideoFrameCallback?: (callback: (now: number, metadata: { mediaTime: number }) => void) => number;
@@ -69,7 +79,11 @@ type VideoWithFrameCallback = HTMLVideoElement & {
  * Detection parameters (thresholds, crossing orientation) come from the per-drill
  * config in src/lib/detection — see getDetectionConfigForDrill.
  */
-export async function detectLapsFromVideo(videoUri: string, config: LapDetectionConfig): Promise<LapDetectionResult> {
+export async function detectLapsFromVideo(
+  videoUri: string,
+  config: LapDetectionConfig,
+  frameExtractor: FrameExtractor = extractFrames,
+): Promise<LapDetectionResult> {
   const { detection } = config;
   const emptyDiagnostics: LapDetectionDiagnostics = {
     frameCount: 0,
@@ -82,7 +96,7 @@ export async function detectLapsFromVideo(videoUri: string, config: LapDetection
     series: [],
   };
 
-  const frames = await extractFrames(videoUri, detection);
+  const frames = await frameExtractor(videoUri, detection);
   if (frames.length === 0) return { laps: [], detectionEvents: [], diagnostics: emptyDiagnostics };
 
   const pixelCount = detection.sampleWidth * detection.sampleHeight;

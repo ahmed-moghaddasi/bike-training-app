@@ -36,7 +36,19 @@ import {
   MAX_RECORDING_DURATION_MS,
 } from './src/lib/recording';
 import { shareOrDownloadVideo } from './src/lib/localVideo';
-import { deleteSavedSession, isSupabaseConfigured, loadSavedSessions, saveSessionDraft, uploadDebugReport } from './src/lib/supabase';
+import {
+  attachSessionNotes,
+  attachVideoStoragePath,
+  createId,
+  createPendingSession,
+  deleteSavedSession,
+  isSupabaseConfigured,
+  loadSavedSessions,
+  markSessionError,
+  triggerServerProcessing,
+  uploadDebugReport,
+  uploadSessionVideo,
+} from './src/lib/supabase';
 import { colors, fonts, radius, spacing } from './src/theme';
 import type { Bike, DetectionEvent, Drill, Lap, ProcessingJob, ProgressContext, Session, SessionDraft, SetupVariant } from './src/types';
 
@@ -123,9 +135,7 @@ export default function App() {
             id: createJobId(),
             drillId: next.drillId,
             draft,
-            status: 'extracting',
-            laps: [],
-            detectionEvents: [],
+            status: 'uploading',
             notes: '',
             saveRequested: false,
             saveStatus: 'idle',
@@ -221,6 +231,9 @@ function JobRunner({
   const startedRef = useRef(false);
   const drill = drills.find((item) => item.id === job.drillId) ?? drills[0];
 
+  // Lap detection happens out-of-process now (server/, triggered via GitHub
+  // Actions) — this just gets the video staged and the job triggered, then
+  // hands off. Results show up later via loadSavedSessions() on Sessions.
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
@@ -229,61 +242,57 @@ function JobRunner({
       return;
     }
     let cancelled = false;
-    detectLapsFromVideo(job.draft.videoUri, {
-      detection: getDetectionConfigForDrill(drill.id),
-      detectionsPerLap: drill.timingRule.detectionsPerLap ?? 1,
-      recordingStartedAt: job.draft.startedAt,
-    })
-      .then((result) => {
+    (async () => {
+      try {
+        const response = await fetch(job.draft.videoUri!);
+        const blob = await response.blob();
+        const sessionId = createId();
+        await createPendingSession(sessionId, job.draft);
         if (cancelled) return;
-        onUpdate(job.id, {
-          status: 'done',
-          laps: result.laps,
-          detectionEvents: result.detectionEvents,
-          diagnostics: result.diagnostics,
-        });
-        void uploadDebugReport({
-          drillId: job.drillId,
-          startedAt: job.draft.startedAt,
-          payload: { laps: result.laps, detectionEvents: result.detectionEvents, diagnostics: result.diagnostics },
-        });
-      })
-      .catch((error) => {
+        onUpdate(job.id, { sessionId });
+        const storagePath = await uploadSessionVideo(sessionId, blob);
         if (cancelled) return;
-        onUpdate(job.id, {
-          status: 'error',
-          errorMessage: error instanceof Error ? error.message : 'Could not analyze this recording for laps.',
-        });
-      });
+        await attachVideoStoragePath(sessionId, storagePath);
+        await triggerServerProcessing(sessionId, job.drillId);
+        if (cancelled) return;
+        onUpdate(job.id, { status: 'queued' });
+      } catch (error) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : 'Could not upload this recording.';
+        onUpdate(job.id, { status: 'error', errorMessage: message });
+        if (job.sessionId) void markSessionError(job.sessionId, message);
+      }
+    })();
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The rider may tap "Save Session" while this is still extracting (saveRequested
-  // flips true via App's requestBackgroundSave) — once detection lands, save then.
+  // The rider may tap "Save Session" before the upload/trigger sequence above
+  // finishes — attach notes once a session row actually exists to attach them to.
   useEffect(() => {
-    if (job.status === 'extracting' || !job.saveRequested || job.saveStatus !== 'idle') return;
+    if (!job.saveRequested || job.saveStatus !== 'idle') return;
     if (job.status === 'error') {
       onUpdate(job.id, { saveStatus: 'error', saveError: job.errorMessage });
-      onToast(`Could not analyze "${drill.name}" — laps were not detected.`, true);
+      onToast(`Could not upload "${drill.name}" for processing.`, true);
       return;
     }
+    if (!job.sessionId) return;
     onUpdate(job.id, { saveStatus: 'saving' });
-    saveSessionDraft({ ...job.draft, laps: job.laps, detectionEvents: job.detectionEvents }, job.notes, false)
+    attachSessionNotes(job.sessionId, job.notes)
       .then(() => {
         onUpdate(job.id, { saveStatus: 'saved' });
-        onToast(`${drill.name} saved · ${job.laps.length} lap${job.laps.length === 1 ? '' : 's'}`, false);
+        onToast(`${drill.name} saved — processing in the background.`, false);
       })
       .catch((error) => {
         onUpdate(job.id, {
           saveStatus: 'error',
           saveError: error instanceof Error ? error.message : 'Could not save the session.',
         });
-        onToast(`Could not save "${drill.name}" in the background.`, true);
+        onToast(`Could not save "${drill.name}".`, true);
       });
-  }, [job.status, job.saveRequested, job.saveStatus]);
+  }, [job.status, job.saveRequested, job.saveStatus, job.sessionId]);
 
   return null;
 }
@@ -729,32 +738,20 @@ function SessionSummaryScreen({
   const [localVideoMessage, setLocalVideoMessage] = useState<string | null>(null);
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Detection now lives in a JobRunner mounted at the App level (see App.tsx)
-  // so it keeps running even if the rider navigates away from this screen.
-  const isProcessing = job?.status === 'extracting';
-  const resolvedLaps = job?.laps ?? draft?.laps ?? [];
-  const resolvedEvents = job?.detectionEvents ?? draft?.detectionEvents ?? [];
-  const diagnostics = job?.diagnostics as LapDetectionDiagnostics | undefined;
+  // Lap detection now happens server-side (see JobRunner in App.tsx) — this
+  // screen no longer waits to show laps; it just confirms the upload and
+  // hands off. Results show up later in the Sessions list.
+  const isUploading = job?.status === 'uploading';
   const effectiveSaveStatus: 'idle' | 'saving' | 'saved' | 'error' = saveStatus !== 'idle' ? saveStatus : job?.saveStatus ?? 'idle';
   const effectiveSaveMessage =
     saveMessage ??
     (job?.saveStatus === 'saved'
-      ? 'Session and laps saved.'
+      ? 'Saved — processing on the server. Check Sessions later for your laps.'
       : job?.saveStatus === 'error'
         ? job.saveError ?? 'Could not save the session.'
         : null);
-  const summaryLaps = draft ? resolvedLaps : mockLaps;
-  const times = summaryLaps.filter((lap) => !lap.excludedFromScoring).map((lap) => lap.time);
-  const best = times.length ? Math.min(...times) : undefined;
-  const avg = times.length ? times.reduce((sum, lap) => sum + lap, 0) / times.length : undefined;
-  const spread = times.length ? Math.max(...times) - Math.min(...times) : undefined;
-  const firstPassTime = resolvedEvents.find((event) => event.eventType === 'sessionStart')?.videoTimestamp;
-
-  useEffect(() => {
-    if (job?.status === 'done' && firstPassTime !== undefined && previewVideoRef.current) {
-      previewVideoRef.current.currentTime = Math.max(0, firstPassTime - 5);
-    }
-  }, [job?.status, firstPassTime]);
+  const mockTimes = mockLaps.map((lap) => lap.time);
+  const mockBest = mockTimes.length ? Math.min(...mockTimes) : undefined;
 
   async function saveVideoToDevice() {
     if (!draft?.videoUri) return;
@@ -782,26 +779,6 @@ function SessionSummaryScreen({
     }
   }
 
-  function downloadDebugReport() {
-    if (!diagnostics || !draft) return;
-    const payload = {
-      drillId: draft.drillId,
-      startedAt: draft.startedAt,
-      laps: resolvedLaps,
-      detectionEvents: resolvedEvents,
-      diagnostics,
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `apex-lab-debug-${draft.drillId}-${draft.startedAt.replace(/[:.]/g, '-')}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
   async function saveRecordedSession() {
     if (effectiveSaveStatus === 'saved') {
       go({ name: 'sessions' });
@@ -816,27 +793,10 @@ function SessionSummaryScreen({
       setSaveMessage('Supabase is not configured for this build.');
       return;
     }
-    if (job.status === 'extracting') {
-      // Still finding laps — hand off to the background job and leave now;
-      // JobRunner saves automatically once detection resolves.
-      onRequestBackgroundSave(job.id, notes);
-      go({ name: 'sessions' });
-      return;
-    }
-    try {
-      setSaveStatus('saving');
-      setSaveMessage('Saving session...');
-      const result = await saveSessionDraft(
-        { ...draft, laps: resolvedLaps, detectionEvents: resolvedEvents },
-        notes,
-        localVideoStatus === 'saved',
-      );
-      setSaveStatus('saved');
-      setSaveMessage(result.videoSaved ? 'Session and laps saved. Video kept on your device.' : 'Session and laps saved.');
-    } catch (error) {
-      setSaveStatus('error');
-      setSaveMessage(error instanceof Error ? error.message : 'Could not save the session.');
-    }
+    // The upload+trigger sequence (JobRunner) may still be in flight — hand
+    // off notes and leave now; JobRunner attaches them once a session row exists.
+    onRequestBackgroundSave(job.id, notes);
+    go({ name: 'sessions' });
   }
 
   function discardAndLeave() {
@@ -846,62 +806,54 @@ function SessionSummaryScreen({
 
   return (
     <Page title="Session Complete" subtitle={`${drill.name} · ${setup.name} · ${currentBike.name}`}>
-      <View style={styles.resultHero}>
-        <Text style={styles.resultLabel}>{draft ? 'Recorded Session' : 'New Best'}</Text>
-        <Text style={styles.resultValue}>{isProcessing ? '--' : best ? `${formatLap(best)}s` : '--'}</Text>
-        <Text style={styles.resultSub}>
-          {isProcessing
-            ? 'Finding your laps...'
-            : summaryLaps.length
-              ? `${summaryLaps.length} timed lap${summaryLaps.length === 1 ? '' : 's'}`
-              : 'No complete laps were detected for this run.'}
-        </Text>
-      </View>
-
-      {(isProcessing || summaryLaps.length > 0) && (
-        <Section label="Lap Flow">
-          {isProcessing ? <Text style={styles.bodyText}>Analyzing the recording for laps...</Text> : <LineChart values={times} height={130} />}
-        </Section>
+      {draft ? (
+        <View style={styles.resultHero}>
+          <Text style={styles.resultLabel}>Recorded Session</Text>
+          <Text style={styles.resultValue}>{isUploading ? 'Uploading...' : job?.status === 'error' ? 'Upload failed' : 'Processing'}</Text>
+          <Text style={styles.resultSub}>
+            {isUploading
+              ? 'Sending your video for processing...'
+              : job?.status === 'error'
+                ? job.errorMessage ?? 'Could not upload this recording.'
+                : "Your laps are being found on the server — check Sessions later, you don't need to keep this open."}
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.resultHero}>
+          <Text style={styles.resultLabel}>New Best</Text>
+          <Text style={styles.resultValue}>{mockBest ? `${formatLap(mockBest)}s` : '--'}</Text>
+          <Text style={styles.resultSub}>{mockLaps.length} timed laps</Text>
+        </View>
       )}
 
-      <StatGrid
-        items={[
-          ['Average', isProcessing ? '...' : avg ? `${formatLap(avg)}s` : '--'],
-          ['Laps', isProcessing ? '...' : String(summaryLaps.length)],
-          ['Spread', isProcessing ? '...' : spread ? `${formatLap(spread)}s` : '--'],
-        ]}
-      />
-
-      <Section label="Lap Times">
-        {isProcessing ? (
-          <Text style={styles.bodyText}>Finding your laps...</Text>
-        ) : summaryLaps.length ? (
-          <LapList laps={summaryLaps} />
-        ) : (
-          <EmptyState title="No laps yet" body="Try another pass through the timing line after the timer starts." />
-        )}
-      </Section>
+      {!draft && (
+        <>
+          <Section label="Lap Flow">
+            <LineChart values={mockTimes} height={130} />
+          </Section>
+          <Section label="Lap Times">
+            <LapList laps={mockLaps} />
+          </Section>
+        </>
+      )}
 
       <Section label="Video">
         {job?.status === 'error' && (
-          <Text style={[styles.bodyText, styles.saveMessageError]}>Could not analyze this recording for laps. The video is still available below.</Text>
+          <Text style={[styles.bodyText, styles.saveMessageError]}>Could not upload this recording for processing. The video is still available below.</Text>
         )}
         {draft?.videoUri && Platform.OS === 'web' ? (
-          <View style={styles.videoPreviewWrapper}>
-            {React.createElement('video', {
-              ref: previewVideoRef,
-              src: draft.videoUri,
-              controls: true,
-              playsInline: true,
-              style: {
-                backgroundColor: colors.black,
-                borderRadius: radius.md,
-                display: 'block',
-                width: '100%',
-              },
-            })}
-            <LapFlashOverlay videoRef={previewVideoRef} events={resolvedEvents} />
-          </View>
+          React.createElement('video', {
+            ref: previewVideoRef,
+            src: draft.videoUri,
+            controls: true,
+            playsInline: true,
+            style: {
+              backgroundColor: colors.black,
+              borderRadius: radius.md,
+              display: 'block',
+              width: '100%',
+            },
+          })
         ) : (
           <Text style={styles.bodyText}>{draft ? 'Video was not recorded for this run.' : 'Saved · placeholder recording attached to this mock session.'}</Text>
         )}
@@ -924,19 +876,6 @@ function SessionSummaryScreen({
               <Text style={[styles.saveMessage, localVideoStatus === 'error' && styles.saveMessageError]}>{localVideoMessage}</Text>
             )}
             {draft.recordingStopReason === 'maxDuration' && <Text style={styles.cameraTip}>Recording stopped at the 8-minute limit.</Text>}
-          </>
-        )}
-        {diagnostics && (
-          <>
-            <View style={styles.videoSaveRow}>
-              <View style={styles.videoSaveCopy}>
-                <Text style={styles.cardTitle}>Debug Data</Text>
-                <Text style={styles.cardSub}>
-                  {diagnostics.frameCount} frames · max ratio {diagnostics.maxPrimaryRatio.toFixed(3)} / {diagnostics.maxSecondaryRatio.toFixed(3)} (threshold {diagnostics.config.changedRatioThreshold})
-                </Text>
-              </View>
-              <SecondaryButton label="Export Debug Data" onPress={downloadDebugReport} />
-            </View>
           </>
         )}
       </Section>
@@ -962,8 +901,8 @@ function SessionSummaryScreen({
             ? 'Saving...'
             : effectiveSaveStatus === 'saved'
               ? 'View Sessions'
-              : isProcessing
-                ? 'Save & Finish in Background'
+              : isUploading
+                ? 'Save & Finish Uploading'
                 : 'Save Session'
         }
         onPress={() => void saveRecordedSession()}
@@ -1460,16 +1399,30 @@ function SessionCard({ session, onPress }: { session: Session; onPress: () => vo
   const drill = drills.find((item) => item.id === session.drillId);
   const bike = bikes.find((item) => item.id === session.bikeId);
   const setup = getSetupName(drill, session.setupVariantId);
+  const isPending = session.status === 'queued' || session.status === 'processing';
+  const isError = session.status === 'error';
   return (
     <Pressable style={styles.sessionCard} onPress={onPress}>
       <Text style={styles.cardTag}>{formatDate(session.date)}</Text>
       <Text style={styles.cardTitle}>{drill?.name ?? session.drillId}</Text>
       <Text style={styles.cardSub}>{setup} · {bike?.name ?? session.bikeId}</Text>
-      <View style={styles.cardBottomRow}>
-        <Text style={styles.metricText}>Best {formatLap(bestLap(session))}s</Text>
-        <Text style={styles.metricText}>Avg {formatLap(averageLap(session))}s</Text>
-        <Text style={styles.metricText}>{session.laps.length} laps</Text>
-      </View>
+      {isPending && (
+        <View style={[styles.statusPill, styles.statusPillPending]}>
+          <Text style={styles.statusPillText}>Processing…</Text>
+        </View>
+      )}
+      {isError && (
+        <View style={[styles.statusPill, styles.statusPillError]}>
+          <Text style={[styles.statusPillText, styles.statusPillErrorText]}>{session.errorMessage ?? 'Processing failed'}</Text>
+        </View>
+      )}
+      {!isPending && !isError && (
+        <View style={styles.cardBottomRow}>
+          <Text style={styles.metricText}>Best {formatLap(bestLap(session))}s</Text>
+          <Text style={styles.metricText}>Avg {formatLap(averageLap(session))}s</Text>
+          <Text style={styles.metricText}>{session.laps.length} laps</Text>
+        </View>
+      )}
       <Text style={styles.cardSub}>{session.videoSaved ? 'Video' : 'No video'}{session.notes ? ' · Notes' : ''}</Text>
     </Pressable>
   );
@@ -1632,6 +1585,28 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 1,
     textTransform: 'uppercase',
+  },
+  statusPill: {
+    alignSelf: 'flex-start',
+    borderRadius: radius.pill,
+    marginVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  statusPillPending: {
+    backgroundColor: colors.silverMid,
+  },
+  statusPillError: {
+    backgroundColor: colors.red,
+  },
+  statusPillText: {
+    color: colors.charcoal,
+    fontFamily: fonts.body,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  statusPillErrorText: {
+    color: colors.white,
   },
   page: {
     paddingHorizontal: spacing.pageX,

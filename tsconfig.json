@@ -3,5 +3,5 @@
   "compilerOptions": {
     "strict": true
   },
-  "exclude": ["dist", "web-build", "node_modules"]
+  "exclude": ["dist", "web-build", "node_modules", "server", "supabase"]
 }
