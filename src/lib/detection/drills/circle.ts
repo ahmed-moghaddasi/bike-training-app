@@ -47,4 +47,10 @@ export const circleDetectionConfig: Partial<DetectionConfig> = {
   // after. The known-good ground-truth clips' fastest real half-lap gap is
   // ~2.1-2.4s, so 1900ms sits between the two with margin on both sides.
   duplicateDirectionWindowMs: 1_900,
+  // Circle is the one drill ridden as a continuous loop where the rider can
+  // plausibly pause mid-recording (switch direction, take a break) without
+  // stopping the camera — point-to-point drills reset between every rep by
+  // design, so this stays off for them (shared default: false). See the
+  // breakMultiplier comment in detection/types.ts for the tuning behind 1.8.
+  breakDetectionEnabled: true,
 };

@@ -104,7 +104,8 @@ export async function detectLapsFromVideo(
   const series = await computeChangedRatioSeries(frames, baselines, windowOf, detection);
   const { crossings, candidates } = detectCrossings(series, detection);
   const result = reduceCrossingsToLaps(crossings, Math.max(1, config.detectionsPerLap), config.recordingStartedAt);
-  result.laps = markWarmupAndCooldownLaps(result.laps);
+  const candidateTimesSeconds = candidates.map((candidate) => candidate.startTime / 1000).sort((a, b) => a - b);
+  result.laps = markLapSegments(result.laps, detection, candidateTimesSeconds);
 
   const diagnostics: LapDetectionDiagnostics = {
     frameCount: frames.length,
@@ -600,11 +601,83 @@ function reduceCrossingsToLaps(
  * represents a real effort, so they're flagged out of scoring (best/average/
  * spread) but kept visible in the lap list. Only applied when there are
  * enough laps that excluding both ends still leaves at least one scored lap.
+ *
+ * When detection.breakDetectionEnabled, a mid-session pause (rider rides
+ * out, stops to switch direction or rest, rides back in, all without
+ * stopping the camera) is treated the same way: the lap spanning the pause
+ * — which otherwise comes out as one lap with an enormous, meaningless time
+ * (ride time + pause time mixed together) — is relabeled 'break' and
+ * excluded, and a fresh warmup/cooldown pair is applied around it, exactly
+ * as if a new session had started there.
+ *
+ * Lap duration alone can't safely tell "the rider paused" apart from "one
+ * crossing was silently missed, merging two ordinary (or slow) laps into
+ * one long-looking one" — both show up as a single anomalously long lap.
+ * Confirmed against real data (2026-06-29): a genuine pause leaves a long
+ * contiguous stretch with *no candidate activity at all* (no confirmed
+ * crossing, but also no rejected/timed-out/suppressed one — nothing at all
+ * near the zone), while a missed-crossing merge still has some candidate
+ * trace because the bike was still passing by, just not cleanly enough to
+ * confirm. So a lap only gets flagged 'break' if BOTH (a) its time clears
+ * breakMultiplier × the rolling pace baseline, AND (b) candidateTimesSeconds
+ * has a gap of at least that same multiple within the lap's own window —
+ * otherwise it's left alone exactly as before this feature existed (an
+ * unflagged, if inaccurate, long lap), which is the safe fallback when the
+ * evidence for a real pause isn't there.
  */
-function markWarmupAndCooldownLaps(laps: Lap[]): Lap[] {
+function markLapSegments(laps: Lap[], detection: DetectionConfig, candidateTimesSeconds: number[]): Lap[] {
   if (laps.length <= 2) return laps;
-  return laps.map((lap, index) => {
-    if (index === 0 || index === laps.length - 1) return { ...lap, excludedFromScoring: true };
-    return lap;
-  });
+
+  function hasQuietGap(windowStart: number, windowEnd: number, minGapSeconds: number): boolean {
+    const inWindow = candidateTimesSeconds.filter((t) => t >= windowStart && t <= windowEnd);
+    const boundaryTimes = [windowStart, ...inWindow, windowEnd];
+    for (let i = 1; i < boundaryTimes.length; i += 1) {
+      if (boundaryTimes[i] - boundaryTimes[i - 1] >= minGapSeconds) return true;
+    }
+    return false;
+  }
+
+  const breakIndices = new Set<number>();
+  if (detection.breakDetectionEnabled) {
+    const { breakMultiplier, breakRollingWindowSize, breakBootstrapCount } = detection;
+    const recentNormalTimes: number[] = [];
+    for (let i = 0; i < laps.length; i += 1) {
+      if (recentNormalTimes.length >= breakBootstrapCount) {
+        const sorted = [...recentNormalTimes].sort((a, b) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        const windowEnd = laps[i].timestampInVideo ?? 0;
+        const windowStart = windowEnd - laps[i].time;
+        if (laps[i].time >= median * breakMultiplier && hasQuietGap(windowStart, windowEnd, median * breakMultiplier)) {
+          breakIndices.add(i);
+          continue; // don't fold a break's time into the rolling pace baseline
+        }
+      }
+      recentNormalTimes.push(laps[i].time);
+      if (recentNormalTimes.length > breakRollingWindowSize) recentNormalTimes.shift();
+    }
+  }
+
+  const result = laps.map((lap, index) =>
+    breakIndices.has(index) ? { ...lap, lapLabel: 'break' as const, excludedFromScoring: true } : lap,
+  );
+
+  // Segment boundaries: start of array, each break, end of array — label
+  // each segment's first/last lap warmup/cooldown, same rule as before just
+  // applied once per segment instead of once for the whole session.
+  const boundaries = [-1, ...Array.from(breakIndices).sort((a, b) => a - b), laps.length];
+  for (let b = 0; b < boundaries.length - 1; b += 1) {
+    const segmentStart = boundaries[b] + 1;
+    const segmentEnd = boundaries[b + 1] - 1;
+    if (segmentStart > segmentEnd) continue; // two breaks back to back, no laps between
+    const segmentLength = segmentEnd - segmentStart + 1;
+    if (segmentLength <= 2) {
+      // Too short to distinguish a real effort from settling in — exclude the whole thing.
+      for (let i = segmentStart; i <= segmentEnd; i += 1) result[i] = { ...result[i], excludedFromScoring: true };
+      continue;
+    }
+    result[segmentStart] = { ...result[segmentStart], lapLabel: 'warmup', excludedFromScoring: true };
+    result[segmentEnd] = { ...result[segmentEnd], lapLabel: 'cooldown', excludedFromScoring: true };
+  }
+
+  return result;
 }

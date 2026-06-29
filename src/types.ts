@@ -65,7 +65,8 @@ export type Lap = {
   lapNumber: number;
   time: number;
   timestampInVideo?: number;
-  /** Warm-up (first lap) or cool-down (last lap) — shown to the rider but left out of best/average/spread. */
+  /** Warm-up/cool-down (start/end of a riding segment) or break (the lap spanning a mid-session pause) — shown to the rider but left out of best/average/spread. */
+  lapLabel?: 'warmup' | 'cooldown' | 'break';
   excludedFromScoring?: boolean;
 };
 

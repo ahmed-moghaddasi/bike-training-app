@@ -128,6 +128,42 @@ export type DetectionConfig = {
    * tighten only if it's matching things it shouldn't.
    */
   markerColor: { hue: number; hueToleranceDegrees: number; minSaturation: number } | null;
+  /**
+   * Lets a continuous recording contain more than one riding segment — the
+   * rider can ride out, pause (switch direction, take a break), and ride
+   * back in without stopping the recording. The lap spanning that pause
+   * comes out of detection as one lap with an enormous, meaningless time
+   * (ride time + pause time mixed together); when enabled, that lap is
+   * relabeled 'break' and excluded, and the laps immediately before/after
+   * it become that segment's cooldown/the next segment's warmup — the same
+   * exclusion markWarmupAndCooldownLaps already applies once per session,
+   * just repeated at every break boundary instead of only at the very start
+   * and end.
+   *
+   * Defaults to false: this is new, Circle-specific behavior. Point-to-point
+   * drills (Hairpin, L-Turn) likely reset between every single rep by
+   * design, so a "gap between laps means a break" heuristic tuned for a
+   * continuous-loop drill like Circle could misfire constantly there.
+   */
+  breakDetectionEnabled: boolean;
+  /**
+   * A lap counts as a break once its time is at least this many times the
+   * rolling median of recent normal lap times. Tuned against two real data
+   * points (2026-06-28/29): Circle Drill Test's natural mid-session pace
+   * slowdown (clip 1, laps ~10-14) peaked around 1.35x its surrounding
+   * baseline and must never be flagged; a real outdoor break (rider stepped
+   * away ~20s) showed up as a lap roughly 3.5x baseline and must always be
+   * flagged. 1.8x sits in the middle with margin on both sides. Deliberately
+   * not requiring the very next lap to instantly snap back to baseline
+   * before confirming a break — that same real session took a few laps to
+   * fully resettle afterward, so a strict immediate-recovery rule would
+   * have missed it.
+   */
+  breakMultiplier: number;
+  /** How many recent normal lap times to keep in the rolling-median baseline. */
+  breakRollingWindowSize: number;
+  /** How many normal laps must already be seen before a lap can be judged a break — no baseline yet before that. */
+  breakBootstrapCount: number;
 };
 
 export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
@@ -151,6 +187,10 @@ export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
   blobCalibrationWindowSize: 8,
   blobCalibrationBootstrapCount: 2,
   markerColor: null,
+  breakDetectionEnabled: false,
+  breakMultiplier: 1.8,
+  breakRollingWindowSize: 6,
+  breakBootstrapCount: 2,
   // 8x caused the browser to drop the vast majority of decoded frames during
   // requestVideoFrameCallback (verified: re-running the same clip at 8x
   // produced a different frame count each time — 577 vs 1149 frames over the

@@ -29,7 +29,7 @@ async function main() {
   console.log(`frameCount=${result.diagnostics.frameCount} clipDurationSeconds=${result.diagnostics.clipDurationSeconds.toFixed(1)}`);
   console.log(`laps=${result.laps.length}`);
   for (const lap of result.laps) {
-    console.log(`  L${lap.lapNumber}: ${lap.time.toFixed(2)}s${lap.excludedFromScoring ? ' (excluded)' : ''}`);
+    console.log(`  L${lap.lapNumber}: ${lap.time.toFixed(2)}s${lap.lapLabel ? ` (${lap.lapLabel})` : ''}`);
   }
 }
 

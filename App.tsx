@@ -1512,14 +1512,20 @@ function MetricMini({ label, value }: { label: string; value: string }) {
   );
 }
 
-function LapList({ laps }: { laps: { lapNumber: number; time: number; excludedFromScoring?: boolean }[] }) {
+const lapTagLabels: Record<'warmup' | 'cooldown' | 'break', string> = {
+  warmup: 'Warm-up',
+  cooldown: 'Cool-down',
+  break: 'Break',
+};
+
+function LapList({ laps }: { laps: { lapNumber: number; time: number; excludedFromScoring?: boolean; lapLabel?: 'warmup' | 'cooldown' | 'break' }[] }) {
   const scoredTimes = laps.filter((lap) => !lap.excludedFromScoring).map((lap) => lap.time);
   const best = scoredTimes.length ? Math.min(...scoredTimes) : undefined;
   return (
     <View style={styles.lapList}>
-      {laps.map((lap, index) => {
+      {laps.map((lap) => {
         const isBest = !lap.excludedFromScoring && lap.time === best;
-        const tag = lap.excludedFromScoring ? (index === 0 ? 'Warm-up' : 'Cool-down') : undefined;
+        const tag = lap.lapLabel ? lapTagLabels[lap.lapLabel] : undefined;
         return (
           <View key={lap.lapNumber} style={[styles.lapRow, isBest && styles.lapRowBest]}>
             <Text style={[styles.lapNum, isBest && styles.lapTextBest]}>L{lap.lapNumber}</Text>
