@@ -1,5 +1,7 @@
 export type DiagramKey = 'circle' | 'figure-eight' | 'hairpin' | 'l-turn';
 
+export type DrillGroup = 'foundations' | 'race-craft';
+
 export type BikeCategory = 'pitbike' | 'minigp' | 'lightweight' | 'full-size';
 
 export type Bike = {
@@ -44,6 +46,8 @@ export type Progression = {
 export type Drill = {
   id: string;
   name: string;
+  group: DrillGroup;
+  isReady: boolean;
   shortDescription: string;
   whatThisTrains: string[];
   whyItMatters: string;

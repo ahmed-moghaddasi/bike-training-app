@@ -50,7 +50,7 @@ import {
   uploadSessionVideo,
 } from './src/lib/supabase';
 import { colors, fonts, radius, spacing } from './src/theme';
-import type { Bike, DetectionEvent, Drill, Lap, ProcessingJob, ProgressContext, Session, SessionDraft, SetupVariant } from './src/types';
+import type { Bike, DetectionEvent, Drill, DrillGroup, Lap, ProcessingJob, ProgressContext, Session, SessionDraft, SetupVariant } from './src/types';
 
 type ReturnRoute =
   | { name: 'home' }
@@ -318,32 +318,49 @@ function parentRoute(route: Route): Route {
 
 
 
+const DRILL_GROUP_ORDER: { key: DrillGroup; label: string }[] = [
+  { key: 'foundations', label: 'Foundations' },
+  { key: 'race-craft', label: 'Race Craft' },
+];
+
 function DrillsScreen({ currentBikeId, go }: { currentBikeId: string; go: (route: Route) => void }) {
+  const readyDrills = drills.filter((drill) => drill.isReady);
+
   return (
     <Page title="Drills" subtitle="Choose the setup you want to practice.">
-      <View style={styles.drillGrid}>
-        {drills.map((drill) => {
-          const setup = drill.setupVariants.find((variant) => variant.id === drill.defaultSetupVariantId);
-          const contextSessions = sessionsForContext(sessions, {
-            bikeId: currentBikeId,
-            drillId: drill.id,
-            setupVariantId: drill.defaultSetupVariantId,
-          });
-          const latest = latestSession(contextSessions);
-          const best = contextSessions.length ? Math.min(...contextSessions.map(bestLap)) : undefined;
-          return (
-            <Pressable key={drill.id} style={styles.drillLibraryCard} onPress={() => go({ name: 'drill', drillId: drill.id, returnTo: { name: 'drills' } })}>
-              <Text style={styles.drillCardTitle}>{drill.name}</Text>
-              <DrillDiagram type={drill.diagramKey} compact />
-              <View style={styles.cardBottomRow}>
-                <Text style={styles.metricText}>Best: {formatLap(best)}s</Text>
-                <Text style={styles.metricText}>Last: {latest ? formatDate(latest.date, true) : 'Not yet'}</Text>
-              </View>
-              <Text style={styles.cardSub}>{setup?.name}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      {DRILL_GROUP_ORDER.map(({ key, label }) => {
+        const groupDrills = readyDrills.filter((drill) => drill.group === key);
+        if (groupDrills.length === 0) {
+          return null;
+        }
+        return (
+          <Section key={key} label={label}>
+            <View style={styles.drillGrid}>
+              {groupDrills.map((drill) => {
+                const setup = drill.setupVariants.find((variant) => variant.id === drill.defaultSetupVariantId);
+                const contextSessions = sessionsForContext(sessions, {
+                  bikeId: currentBikeId,
+                  drillId: drill.id,
+                  setupVariantId: drill.defaultSetupVariantId,
+                });
+                const latest = latestSession(contextSessions);
+                const best = contextSessions.length ? Math.min(...contextSessions.map(bestLap)) : undefined;
+                return (
+                  <Pressable key={drill.id} style={styles.drillLibraryCard} onPress={() => go({ name: 'drill', drillId: drill.id, returnTo: { name: 'drills' } })}>
+                    <Text style={styles.drillCardTitle}>{drill.name}</Text>
+                    <DrillDiagram type={drill.diagramKey} compact />
+                    <View style={styles.cardBottomRow}>
+                      <Text style={styles.metricText}>Best: {formatLap(best)}s</Text>
+                      <Text style={styles.metricText}>Last: {latest ? formatDate(latest.date, true) : 'Not yet'}</Text>
+                    </View>
+                    <Text style={styles.cardSub}>{setup?.name}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </Section>
+        );
+      })}
     </Page>
   );
 }

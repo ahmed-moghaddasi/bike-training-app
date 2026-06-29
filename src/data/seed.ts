@@ -22,6 +22,8 @@ export const drills: Drill[] = [
   {
     id: 'circle',
     name: 'Circle',
+    group: 'foundations',
+    isReady: true,
     shortDescription: 'Constant-radius cornering, relaxed hands, and steady throttle.',
     diagramKey: 'circle',
     defaultSetupVariantId: 'circle-8m',
@@ -103,6 +105,8 @@ export const drills: Drill[] = [
   {
     id: 'figure-eight',
     name: 'Figure Eight',
+    group: 'foundations',
+    isReady: false,
     shortDescription: 'Body transition through the crossover before the next corner begins.',
     diagramKey: 'figure-eight',
     defaultSetupVariantId: 'figure-eight-8m',
@@ -179,6 +183,8 @@ export const drills: Drill[] = [
   {
     id: 'hairpin',
     name: 'Hairpin',
+    group: 'race-craft',
+    isReady: false,
     shortDescription: 'Brake, turn, wait, point toward the exit, and drive out cleanly.',
     diagramKey: 'hairpin',
     defaultSetupVariantId: 'hairpin-standard',
@@ -247,6 +253,8 @@ export const drills: Drill[] = [
   {
     id: 'l-turn',
     name: 'L-Turn',
+    group: 'race-craft',
+    isReady: false,
     shortDescription: 'Late apex line selection in a simple 90-degree corner.',
     diagramKey: 'l-turn',
     defaultSetupVariantId: 'l-turn-standard',
