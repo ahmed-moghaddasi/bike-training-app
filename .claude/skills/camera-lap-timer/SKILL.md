@@ -9,7 +9,7 @@ This skill distills what actually worked building Circle's camera lap timer — 
 
 ## Step 0: decide the timing model before touching any config
 
-Read the target drill's setup, camera-placement, and timing-rule sections in `docs/drill-library.md` — don't assume. Figure out, from that drill's actual physical layout, two things:
+Read the target drill's setup, camera-placement, and timing-rule sections in `../ideation/drill-library.md` (one level up from this repo, in `app-development/ideation/`) — don't assume. Figure out, from that drill's actual physical layout, two things:
 
 1. **What single, camera-visible event marks progress** (a line crossing? entering/leaving a gate? something else?), and **what physically constitutes one complete rep** in terms of that event (one crossing? two? an interval between two distinct gates?).
 2. **Whether the existing shared pipeline's shape actually fits.** `src/lib/lapDetector.ts`'s `detectCrossings` was built and validated around one specific topology: a single zone split into two halves (`primary`/`secondary`), with a confirmed event being one half activating then the other (`primary-to-secondary` or `secondary-to-primary`). That shape fit Circle. It is **not guaranteed to fit every drill** — a drill with two physically separate timing gates (rather than one line's two sides) may not be expressible as a config change to this same model at all, and could need new detection logic rather than a new `drills/<id>.ts` override. Decide this honestly before assuming "just configure it."

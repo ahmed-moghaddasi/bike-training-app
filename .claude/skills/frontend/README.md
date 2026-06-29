@@ -1,1 +1,0 @@
-Home for skills about the app's UI/design work (screens, components, theme, navigation) — as opposed to `../backend/` (session storage, detection logic, server processing). Empty for now; add skills here as patterns worth reusing emerge from frontend work.
