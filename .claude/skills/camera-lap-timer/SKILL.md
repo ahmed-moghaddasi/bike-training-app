@@ -26,7 +26,7 @@ Once decided, set `detectionsPerLap` in `src/data/seed.ts` for that drill from i
 
 ## Step 1: get real ground-truth footage before tuning anything
 
-Get at least 2 real clips of the drill being performed, each with a hand-timed reference (stopwatch or by-eye), saved as plain text. Mirror the existing convention: a folder named `<Drill Name> Drill Test/` containing the clip(s) plus a `<clip name> lap times.txt` per clip. Don't trust synthetic intuition about what the signal should look like — every real fix this session came from looking at real footage's actual diagnostics, not from reasoning about it in the abstract.
+Get at least 2 real clips of the drill being performed, each with a hand-timed reference (stopwatch or by-eye), saved as plain text. Mirror the existing convention: a folder named `<Drill Name> Drill Test/` containing the clip(s) plus a `<clip name> lap times.txt` per clip, living in `app-development/backend/` (a sibling of this repo, not inside it — see `Circle Drill Test/` there for the existing example). Don't trust synthetic intuition about what the signal should look like — every real fix this session came from looking at real footage's actual diagnostics, not from reasoning about it in the abstract.
 
 ## Step 2: iterate fast, locally
 
