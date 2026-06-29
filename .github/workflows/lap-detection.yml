@@ -13,7 +13,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # @supabase/supabase-js constructs a RealtimeClient unconditionally,
+          # which requires a native WebSocket global — only available from
+          # Node 22 onward (confirmed by a real failed run on Node 20).
+          node-version: 22
 
       - name: Ensure ffmpeg is available
         run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
