@@ -62,9 +62,25 @@ export type StraightLineConfig = {
   /**
    * If the pass ends with its centroid within this fraction of the far edge of
    * the frame (in the direction of travel), the bike likely exited the frame
-   * rather than stopping — classify as loop-back.
+   * rather than stopping — classify as loop-back, unless the end-velocity check
+   * overrides (see endVelocityThresholdStripsPerMs).
    */
   farEdgeExitFraction: number;
+  /**
+   * When a pass ends near the far edge, measure the average centroid velocity
+   * over the final endVelocityWindowFrames frames. If it is below this threshold
+   * (strips/ms ≈ 0.004 = ~15 km/h at 1.03 m/strip), the bike was decelerating
+   * to a stop at the edge rather than exiting — classify as a braking run.
+   * A genuine loop-back at 20+ km/h will always be above this threshold.
+   */
+  endVelocityThresholdStripsPerMs: number;
+  /** Number of frames to average over when computing the end-of-pass velocity. */
+  endVelocityWindowFrames: number;
+  /**
+   * Minimum entry speed (km/h) to count a pass as a valid rep. Filters out
+   * setup motion, walking, and very slow passes that sneak through stop detection.
+   */
+  minEntrySpeedKph: number;
 
   // Camera geometry (strips → metres).
   /** Camera distance from the riding line in metres. */
@@ -90,6 +106,9 @@ export const DEFAULT_STRAIGHT_LINE_CONFIG: StraightLineConfig = {
   minApproachFrames: 8,
   assumedDecelerationMps2: 8.0,
   farEdgeExitFraction: 0.90,
+  endVelocityThresholdStripsPerMs: 0.004,
+  endVelocityWindowFrames: 10,
+  minEntrySpeedKph: 10,
   cameraDistanceMeters: 15,
   estimatedHFOVDegrees: 108,
 };
@@ -269,16 +288,12 @@ export function detectBrakingReps(frames: CapturedFrame[], config: StraightLineC
       continue;
     }
 
-    // Once the braking direction is known, the opposite direction is always a loop-back.
-    if (brakingDirection !== null && dir !== brakingDirection) {
-      passDiagnostics.push({
-        startTimeMs: pass.startMs, endTimeMs: pass.endMs, direction: dir, outcome: 'loop-back',
-        ...nullDiag,
-      });
-      continue;
-    }
-
-    // Primary stop-detection: did the bike stop within the frame?
+    // Stop detection: did the bike come to a stop inside the frame?
+    // passEndsWithStop checks the far-edge exit fraction first; if the centroid
+    // landed near the edge it additionally checks end-of-pass velocity — a
+    // decelerating-to-a-stop bike has near-zero velocity at the edge, while a
+    // loop-back exits at speed. This handles the case where the rider stops at
+    // the very edge of frame (common when braking from the far side).
     if (!passEndsWithStop(pass, dir, config)) {
       passDiagnostics.push({
         startTimeMs: pass.startMs, endTimeMs: pass.endMs, direction: dir, outcome: 'loop-back',
@@ -294,6 +309,20 @@ export function detectBrakingReps(frames: CapturedFrame[], config: StraightLineC
         ? brakeMarkerSamples.reduce((sum, s) => sum + s, 0) / brakeMarkerSamples.length
         : null;
     const metrics = analyseBrakingRun(pass, dir, config, metersPerStrip, currentCalibratedStrip);
+
+    // Minimum speed filter: discard setup/walking passes.
+    if (metrics.entrySpeedKph === null || metrics.entrySpeedKph < config.minEntrySpeedKph) {
+      passDiagnostics.push({
+        startTimeMs: pass.startMs, endTimeMs: pass.endMs, direction: dir, outcome: 'too-short',
+        decelerationOnsetStrip: metrics.brakeStrip, entrySpeedKph: metrics.entrySpeedKph,
+        stoppingDistanceMeters: metrics.stoppingDistanceMeters,
+        centroidFrameCount: pass.frameData.length, firstCentroid, lastCentroid,
+        approachSlopeStripsPerMs: metrics.approachSlopeStripsPerMs,
+        speedMethod: metrics.speedMethod,
+        approachFramesUsable: metrics.approachFramesUsable,
+      });
+      continue;
+    }
 
     if (metrics.brakeStrip !== null) {
       brakeMarkerSamples.push(metrics.brakeStrip);
@@ -474,9 +503,15 @@ function passDirection(
 }
 
 /**
- * Returns true if the pass ends with the centroid stopped short of the far
- * edge of the frame — i.e., the bike came to a stop in view rather than
- * exiting the frame (which would indicate a loop-back).
+ * Returns true if the pass ends with the bike stopped in frame rather than
+ * exiting (which indicates a loop-back).
+ *
+ * Two-stage check:
+ * 1. If the last centroid is clearly short of the far edge → stopped, return true.
+ * 2. If it IS near the far edge, measure end-of-pass centroid velocity. A bike
+ *    decelerating to a stop at the edge has near-zero velocity; a loop-back
+ *    exits at speed. This handles the common case where the stop position is
+ *    right at the edge of frame due to camera placement.
  */
 function passEndsWithStop(
   pass: Pass,
@@ -484,11 +519,24 @@ function passEndsWithStop(
   config: StraightLineConfig,
 ): boolean {
   const centroids = pass.frameData.map((d) => d.centroid!);
+  const times = pass.frameData.map((d) => d.timeMs);
   const last = centroids[centroids.length - 1];
   const { numStrips, farEdgeExitFraction } = config;
   const nearFarEdge =
-    direction === 'left-to-right' ? last >= numStrips * farEdgeExitFraction : last <= numStrips * (1 - farEdgeExitFraction);
-  return !nearFarEdge;
+    direction === 'left-to-right'
+      ? last >= numStrips * farEdgeExitFraction
+      : last <= numStrips * (1 - farEdgeExitFraction);
+
+  if (!nearFarEdge) return true;
+
+  // Near the far edge — check whether the bike was still moving fast (exit)
+  // or had decelerated to near-zero (stop at edge).
+  const endIdx = centroids.length - 1;
+  const startIdx = Math.max(0, endIdx - config.endVelocityWindowFrames);
+  if (endIdx <= startIdx) return false;
+  const dt = Math.max(1, times[endIdx] - times[startIdx]);
+  const endVelocity = Math.abs(centroids[endIdx] - centroids[startIdx]) / dt;
+  return endVelocity < config.endVelocityThresholdStripsPerMs;
 }
 
 // ─── Braking-run analysis ─────────────────────────────────────────────────────
