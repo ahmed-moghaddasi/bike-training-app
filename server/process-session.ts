@@ -5,7 +5,12 @@ import path from 'node:path';
 import { drills } from '../src/data/seed';
 import { getDetectionConfigForDrill } from '../src/lib/detection';
 import { detectLapsFromVideo } from '../src/lib/lapDetector';
-import { extractFramesWithFfmpeg } from './ffmpegFrames';
+import {
+  DEFAULT_STRAIGHT_LINE_CONFIG,
+  detectBrakingReps,
+  toFrameExtractionConfig,
+} from '../src/lib/straightLineDetector';
+import { createFfmpegExtractor, extractFramesWithFfmpeg } from './ffmpegFrames';
 
 async function run(sessionId: string, drillId: string, supabaseUrl: string, serviceRoleKey: string) {
   const supabase = createClient(supabaseUrl, serviceRoleKey);
@@ -47,59 +52,101 @@ async function run(sessionId: string, drillId: string, supabaseUrl: string, serv
     await writeFile(videoPath, Buffer.from(await videoBlob.arrayBuffer()));
 
     const drill = drills.find((item) => item.id === drillId) ?? drills[0];
-    const result = await detectLapsFromVideo(
-      videoPath,
-      {
-        detection: getDetectionConfigForDrill(drill.id),
-        detectionsPerLap: drill.timingRule.detectionsPerLap ?? 1,
-        recordingStartedAt: session.started_at ?? new Date().toISOString(),
-      },
-      extractFramesWithFfmpeg,
-    );
 
-    // best/average/spread reflect scored laps only (warm-up/cool-down excluded) —
-    // mirrors the same rule the client used to apply in saveSessionDraft.
-    const scoredTimes = result.laps.filter((lap) => !lap.excludedFromScoring).map((lap) => lap.time);
-    const bestLap = scoredTimes.length ? Math.min(...scoredTimes) : null;
-    const averageLap = scoredTimes.length ? scoredTimes.reduce((sum, time) => sum + time, 0) / scoredTimes.length : null;
-    const spread = scoredTimes.length ? Math.max(...scoredTimes) - Math.min(...scoredTimes) : null;
+    if (drill.timingRule.detectionMode === 'straight-line') {
+      const config = DEFAULT_STRAIGHT_LINE_CONFIG;
+      const extractor = createFfmpegExtractor(60);
+      const frames = await extractor(videoPath, toFrameExtractionConfig(config));
+      const slResult = detectBrakingReps(frames, config);
 
-    if (result.laps.length > 0) {
-      const { error: lapsError } = await supabase.from('laps').insert(
-        result.laps.map((lap) => ({
-          session_id: sessionId,
-          lap_number: lap.lapNumber,
-          time: lap.time,
-          timestamp_in_video: lap.timestampInVideo ?? null,
-        })),
+      const reps = slResult.reps;
+      const stopDistances = reps.map((r) => r.stoppingDistanceMeters ?? Infinity);
+      const bestStop = stopDistances.length ? Math.min(...stopDistances) : null;
+      const avgSpeed = reps.length
+        ? reps.reduce((sum, r) => sum + (r.entrySpeedKph ?? 0), 0) / reps.length
+        : null;
+
+      if (reps.length > 0) {
+        const { error: lapsError } = await supabase.from('laps').insert(
+          reps.map((rep) => ({
+            session_id: sessionId,
+            lap_number: rep.repNumber,
+            time: (rep.brakingDurationMs ?? 0) / 1000,
+            timestamp_in_video: rep.timestampInVideo ?? null,
+            entry_speed_kph: rep.entrySpeedKph ?? null,
+            stopping_distance_meters: rep.stoppingDistanceMeters ?? null,
+            braking_duration_ms: rep.brakingDurationMs ?? null,
+            speed_method: rep.speedMethod ?? null,
+          })),
+        );
+        if (lapsError) await markError(`Could not save laps: ${lapsError.message}`);
+      }
+
+      const { error: updateError } = await supabase
+        .from('sessions')
+        .update({ status: 'ready', lap_count: reps.length, best_lap: bestStop, average_lap: avgSpeed, spread: null })
+        .eq('id', sessionId);
+      if (updateError) await markError(`Could not finalize session: ${updateError.message}`);
+
+      const { error: removeError } = await supabase.storage.from('session-videos').remove([session.video_storage_path]);
+      if (removeError) console.warn(`Processed ok, but could not delete staged video: ${removeError.message}`);
+
+      console.log(`Processed session ${sessionId}: ${reps.length} braking reps.`);
+    } else {
+      const result = await detectLapsFromVideo(
+        videoPath,
+        {
+          detection: getDetectionConfigForDrill(drill.id),
+          detectionsPerLap: drill.timingRule.detectionsPerLap ?? 1,
+          recordingStartedAt: session.started_at ?? new Date().toISOString(),
+        },
+        extractFramesWithFfmpeg,
       );
-      if (lapsError) await markError(`Could not save laps: ${lapsError.message}`);
+
+      // best/average/spread reflect scored laps only (warm-up/cool-down excluded) —
+      // mirrors the same rule the client used to apply in saveSessionDraft.
+      const scoredTimes = result.laps.filter((lap) => !lap.excludedFromScoring).map((lap) => lap.time);
+      const bestLap = scoredTimes.length ? Math.min(...scoredTimes) : null;
+      const averageLap = scoredTimes.length ? scoredTimes.reduce((sum, time) => sum + time, 0) / scoredTimes.length : null;
+      const spread = scoredTimes.length ? Math.max(...scoredTimes) - Math.min(...scoredTimes) : null;
+
+      if (result.laps.length > 0) {
+        const { error: lapsError } = await supabase.from('laps').insert(
+          result.laps.map((lap) => ({
+            session_id: sessionId,
+            lap_number: lap.lapNumber,
+            time: lap.time,
+            timestamp_in_video: lap.timestampInVideo ?? null,
+          })),
+        );
+        if (lapsError) await markError(`Could not save laps: ${lapsError.message}`);
+      }
+
+      if (result.detectionEvents.length > 0) {
+        const { error: eventsError } = await supabase.from('detection_events').insert(
+          result.detectionEvents.map((event) => ({
+            session_id: sessionId,
+            event_type: event.eventType,
+            detected_at: event.detectedAt,
+            video_timestamp: event.videoTimestamp,
+            lap_number: event.lapNumber ?? null,
+            score: event.score ?? null,
+          })),
+        );
+        if (eventsError) await markError(`Could not save detection events: ${eventsError.message}`);
+      }
+
+      const { error: updateError } = await supabase
+        .from('sessions')
+        .update({ status: 'ready', lap_count: result.laps.length, best_lap: bestLap, average_lap: averageLap, spread })
+        .eq('id', sessionId);
+      if (updateError) await markError(`Could not finalize session: ${updateError.message}`);
+
+      const { error: removeError } = await supabase.storage.from('session-videos').remove([session.video_storage_path]);
+      if (removeError) console.warn(`Processed ok, but could not delete staged video: ${removeError.message}`);
+
+      console.log(`Processed session ${sessionId}: ${result.laps.length} laps.`);
     }
-
-    if (result.detectionEvents.length > 0) {
-      const { error: eventsError } = await supabase.from('detection_events').insert(
-        result.detectionEvents.map((event) => ({
-          session_id: sessionId,
-          event_type: event.eventType,
-          detected_at: event.detectedAt,
-          video_timestamp: event.videoTimestamp,
-          lap_number: event.lapNumber ?? null,
-          score: event.score ?? null,
-        })),
-      );
-      if (eventsError) await markError(`Could not save detection events: ${eventsError.message}`);
-    }
-
-    const { error: updateError } = await supabase
-      .from('sessions')
-      .update({ status: 'ready', lap_count: result.laps.length, best_lap: bestLap, average_lap: averageLap, spread })
-      .eq('id', sessionId);
-    if (updateError) await markError(`Could not finalize session: ${updateError.message}`);
-
-    const { error: removeError } = await supabase.storage.from('session-videos').remove([session.video_storage_path]);
-    if (removeError) console.warn(`Processed ok, but could not delete staged video: ${removeError.message}`);
-
-    console.log(`Processed session ${sessionId}: ${result.laps.length} laps.`);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

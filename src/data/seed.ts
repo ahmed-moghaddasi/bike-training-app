@@ -321,6 +321,86 @@ export const drills: Drill[] = [
       },
     ],
   },
+  {
+    id: 'straight-line',
+    name: 'Straight Line',
+    group: 'foundations',
+    isReady: true,
+    shortDescription: 'Max braking from a rolling approach — measure entry speed and stopping distance every rep.',
+    diagramKey: 'straight-line',
+    defaultSetupVariantId: 'straight-line-25m',
+    whatThisTrains: [
+      'Maximum braking force from a consistent approach speed',
+      'Brake lever squeeze — progressive, not panic',
+      'Stopping-distance consistency across reps',
+      'Confidence under hard deceleration',
+    ],
+    whyItMatters:
+      'Braking is the most under-trained skill in riding. Knowing exactly how far it takes to stop at a given speed is the foundation of every braking marker on track.',
+    setupVariants: [
+      {
+        id: 'straight-line-25m',
+        drillId: 'straight-line',
+        name: '25m rolling approach',
+        coneCount: 3,
+        measurements: ['Acceleration zone: 25m', 'Braking marker: cone at center', 'Camera offset: 15m perpendicular', 'Runoff: 15m+'],
+        isDefault: true,
+      },
+    ],
+    conePlacementSteps: [
+      'Place the braking marker cone on the riding line.',
+      'Measure 25m back along the riding line and mark the approach start.',
+      'Place a turn-around cone 15m past the braking marker (runoff zone).',
+      'Set the camera 15m perpendicular to the riding line, centered on the braking marker cone.',
+    ],
+    cameraPlacement: {
+      positionDescription: 'Tripod 15m perpendicular to the riding line, aimed at the braking marker cone. iPhone 0.5× (ultra-wide) at waist height. Braking marker should appear near center of frame.',
+      whatCameraShouldSee: ['Braking marker cone at center', 'Full stop zone to one side', '25m acceleration zone on the other side if possible'],
+      timingPoint: 'Braking marker cone — where the rider first applies the brake.',
+      detectionZoneSuggestion: 'Full frame width. Detection is automatic — no zone to configure.',
+    },
+    timingRule: {
+      detectionMode: 'straight-line',
+      startRule: 'Rider approaches from outside the frame at rolling speed.',
+      lapRule: 'One rep = one braking run from the approach to a full stop. Loop-backs are automatically discarded.',
+      comparisonContext: 'Same setup variant (camera position, braking marker location).',
+    },
+    howToRideSteps: [
+      'Roll away from the braking marker to the approach start cone.',
+      'Build speed through the acceleration zone — aim for a consistent entry speed each rep.',
+      'At the braking marker cone, apply maximum braking force.',
+      'Squeeze progressively and keep the bike straight.',
+      'Come to a complete stop, then ride slowly back to start the next rep.',
+    ],
+    coachingCues: [
+      'Same speed in. Then brake harder.',
+      'Squeeze, don\'t grab.',
+      'Eyes up. Bike goes where you look.',
+    ],
+    commonMistakes: [
+      'Inconsistent approach speed making rep-to-rep comparison meaningless',
+      'Panic-grabbing the lever instead of progressive squeeze',
+      'Looking down at the wheel under hard braking',
+      'Starting to brake before the marker',
+    ],
+    reviewPrompts: [
+      'Was the approach speed consistent across reps?',
+      'Did stopping distance improve across the session?',
+      'Was the brake squeeze smooth or abrupt?',
+    ],
+    successMetrics: [
+      'Stopping distance decreasing across reps',
+      'Entry speed consistent (±5 km/h) across reps',
+      'No loss of control under max braking',
+    ],
+    progressions: [
+      {
+        title: 'Shorter stopping distance',
+        description: 'Keep riding while approaching the same entry speed and reducing stopping distance.',
+        comparisonType: 'sameTimingContext',
+      },
+    ],
+  },
 ];
 
 export const sessions: Session[] = [

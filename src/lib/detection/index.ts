@@ -3,12 +3,14 @@ import { circleDetectionConfig } from './drills/circle';
 import { figureEightDetectionConfig } from './drills/figure-eight';
 import { hairpinDetectionConfig } from './drills/hairpin';
 import { lTurnDetectionConfig } from './drills/l-turn';
+import { straightLineDetectionConfig } from './drills/straight-line';
 
 const overridesByDrillId: Record<string, Partial<DetectionConfig>> = {
   circle: circleDetectionConfig,
   'figure-eight': figureEightDetectionConfig,
   hairpin: hairpinDetectionConfig,
   'l-turn': lTurnDetectionConfig,
+  'straight-line': straightLineDetectionConfig,
 };
 
 /** Merges a drill's overrides (src/lib/detection/drills/<drillId>.ts) onto the shared defaults. */

@@ -1,4 +1,4 @@
-export type DiagramKey = 'circle' | 'figure-eight' | 'hairpin' | 'l-turn';
+export type DiagramKey = 'circle' | 'figure-eight' | 'hairpin' | 'l-turn' | 'straight-line';
 
 export type DrillGroup = 'foundations' | 'race-craft';
 
@@ -34,6 +34,7 @@ export type TimingRule = {
   lapRule: string;
   comparisonContext: string;
   detectionsPerLap?: number;
+  detectionMode?: 'laps' | 'straight-line';
 };
 
 export type Progression = {
@@ -72,6 +73,10 @@ export type Lap = {
   /** Warm-up/cool-down (start/end of a riding segment) or break (the lap spanning a mid-session pause) — shown to the rider but left out of best/average/spread. */
   lapLabel?: 'warmup' | 'cooldown' | 'break';
   excludedFromScoring?: boolean;
+  entrySpeedKph?: number;
+  stoppingDistanceMeters?: number;
+  brakingDurationMs?: number;
+  speedMethod?: 'direct' | 'kinematic';
 };
 
 export type DetectionEvent = {

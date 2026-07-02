@@ -17,12 +17,14 @@ const detailViewBoxes: Record<DiagramKey, string> = {
   'figure-eight': '36 72 528 284',
   hairpin: '42 20 532 454',
   'l-turn': '68 20 548 452',
+  'straight-line': '0 0 320 160',
 };
 const detailAspectRatios: Record<DiagramKey, number> = {
   circle: 444 / 390,
   'figure-eight': 528 / 284,
   hairpin: 532 / 454,
   'l-turn': 548 / 452,
+  'straight-line': 320 / 160,
 };
 
 export function DrillDiagram({ type, compact, variant = 'card' }: Props) {
@@ -38,6 +40,7 @@ export function DrillDiagram({ type, compact, variant = 'card' }: Props) {
         {!isDetail && type === 'figure-eight' && <FigureEightDiagram />}
         {!isDetail && type === 'hairpin' && <HairpinDiagram />}
         {!isDetail && type === 'l-turn' && <LTurnDiagram />}
+        {(type === 'straight-line') && <StraightLineDiagram />}
         {isDetail && type === 'circle' && <CircleDetailDiagram />}
         {isDetail && type === 'figure-eight' && <FigureEightDetailDiagram />}
         {isDetail && type === 'hairpin' && <HairpinDetailDiagram />}
@@ -173,6 +176,20 @@ function LTurnDiagram() {
       <Arrow x={76} y={116} rotation={-90} />
       <Arrow x={112} y={50} rotation={-38} />
       <Arrow x={222} y={24} rotation={0} />
+    </G>
+  );
+}
+
+function StraightLineDiagram() {
+  return (
+    <G>
+      <TrackSurface d="M20 60 H300 V100 H20 Z" />
+      <RiderPath d="M20 80 H220" />
+      <Cone x={220} y={80} />
+      <Arrow x={80} y={80} rotation={0} />
+      <Arrow x={140} y={80} rotation={0} />
+      <Arrow x={260} y={80} rotation={180} />
+      <Line x1={220} y1={55} x2={220} y2={105} stroke={coneOrange} strokeWidth="2" strokeDasharray="4 3" />
     </G>
   );
 }

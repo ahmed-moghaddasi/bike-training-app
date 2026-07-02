@@ -39,6 +39,10 @@ type SavedSessionRow = {
     lap_number: number;
     time: number;
     timestamp_in_video: number | null;
+    entry_speed_kph: number | null;
+    stopping_distance_meters: number | null;
+    braking_duration_ms: number | null;
+    speed_method: 'direct' | 'kinematic' | null;
   }>;
 };
 
@@ -137,7 +141,7 @@ export async function loadSavedSessions(): Promise<SavedSession[]> {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { data, error } = await supabase
     .from('sessions')
-    .select('id,date,bike_id,drill_id,setup_variant_id,video_saved,notes,status,error_message,laps(lap_number,time,timestamp_in_video)')
+    .select('id,date,bike_id,drill_id,setup_variant_id,video_saved,notes,status,error_message,laps(lap_number,time,timestamp_in_video,entry_speed_kph,stopping_distance_meters,braking_duration_ms,speed_method)')
     .order('date', { ascending: false });
 
   if (error) throw error;
@@ -159,6 +163,10 @@ export async function loadSavedSessions(): Promise<SavedSession[]> {
         lapNumber: lap.lap_number,
         time: Number(lap.time),
         timestampInVideo: lap.timestamp_in_video === null ? undefined : Number(lap.timestamp_in_video),
+        entrySpeedKph: lap.entry_speed_kph === null ? undefined : Number(lap.entry_speed_kph),
+        stoppingDistanceMeters: lap.stopping_distance_meters === null ? undefined : Number(lap.stopping_distance_meters),
+        brakingDurationMs: lap.braking_duration_ms === null ? undefined : lap.braking_duration_ms,
+        speedMethod: lap.speed_method ?? undefined,
       })),
   }));
 }

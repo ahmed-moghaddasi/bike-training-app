@@ -28,6 +28,10 @@ create table if not exists public.laps (
   lap_number integer not null,
   time numeric not null,
   timestamp_in_video numeric,
+  entry_speed_kph numeric,
+  stopping_distance_meters numeric,
+  braking_duration_ms integer,
+  speed_method text check (speed_method in ('direct', 'kinematic')),
   created_at timestamptz not null default now()
 );
 

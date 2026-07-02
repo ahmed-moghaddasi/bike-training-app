@@ -345,12 +345,18 @@ function DrillsScreen({ currentBikeId, go }: { currentBikeId: string; go: (route
                 });
                 const latest = latestSession(contextSessions);
                 const best = contextSessions.length ? Math.min(...contextSessions.map(bestLap)) : undefined;
+                const isStraightLineDrill = drill.timingRule.detectionMode === 'straight-line';
+                const bestStopM = isStraightLineDrill
+                  ? contextSessions.flatMap((s) => s.laps.map((l) => l.stoppingDistanceMeters).filter((v): v is number => v != null)).reduce((min, v) => Math.min(min, v), Infinity)
+                  : undefined;
                 return (
                   <Pressable key={drill.id} style={styles.drillLibraryCard} onPress={() => go({ name: 'drill', drillId: drill.id, returnTo: { name: 'drills' } })}>
                     <Text style={styles.drillCardTitle}>{drill.name}</Text>
                     <DrillDiagram type={drill.diagramKey} compact />
                     <View style={styles.cardBottomRow}>
-                      <Text style={styles.metricText}>Best: {formatLap(best)}s</Text>
+                      {isStraightLineDrill
+                        ? <Text style={styles.metricText}>Best stop: {Number.isFinite(bestStopM) ? `${bestStopM!.toFixed(1)} m` : '--'}</Text>
+                        : <Text style={styles.metricText}>Best: {formatLap(best)}s</Text>}
                       <Text style={styles.metricText}>Last: {latest ? formatDate(latest.date, true) : 'Not yet'}</Text>
                     </View>
                     <Text style={styles.cardSub}>{setup?.name}</Text>
@@ -1175,6 +1181,7 @@ function SessionDetailScreen({ sessionId, cloudSession, go }: { sessionId: strin
   const drill = drills.find((item) => item.id === session.drillId) ?? drills[0];
   const bike = bikes.find((item) => item.id === session.bikeId) ?? bikes[0];
   const setup = getSetupName(drill, session.setupVariantId);
+  const isStraightLine = drill.timingRule.detectionMode === 'straight-line';
   const best = bestLap(session);
   const avg = averageLap(session);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -1193,28 +1200,45 @@ function SessionDetailScreen({ sessionId, cloudSession, go }: { sessionId: strin
     }
   }
 
+  const straightLineStats: [string, string][] = (() => {
+    const reps = session.laps;
+    const stops = reps.map((r) => r.stoppingDistanceMeters).filter((v): v is number => v != null);
+    const speeds = reps.map((r) => r.entrySpeedKph).filter((v): v is number => v != null);
+    const bestStop = stops.length ? Math.min(...stops) : null;
+    const avgSpeed = speeds.length ? speeds.reduce((s, v) => s + v, 0) / speeds.length : null;
+    const spread = stops.length ? Math.max(...stops) - Math.min(...stops) : null;
+    return [
+      ['Best Stop', bestStop != null ? `${bestStop.toFixed(1)} m` : '--'],
+      ['Avg Speed', avgSpeed != null ? `${avgSpeed.toFixed(0)} km/h` : '--'],
+      ['Reps', String(reps.length)],
+      ['Spread', spread != null ? `${spread.toFixed(1)} m` : '--'],
+    ];
+  })();
+
   return (
     <Page title={drill.name} subtitle={`${setup} · ${bike.name} · ${formatDate(session.date)}`}>
       <StatGrid
-        items={[
-          ['Best', `${formatLap(best)}s`],
-          ['Average', `${formatLap(avg)}s`],
-          ['Laps', String(session.laps.length)],
-          ['Spread', `${formatLap(lapSpread(session))}s`],
-        ]}
+        items={isStraightLine
+          ? straightLineStats
+          : [
+              ['Best', `${formatLap(best)}s`],
+              ['Average', `${formatLap(avg)}s`],
+              ['Laps', String(session.laps.length)],
+              ['Spread', `${formatLap(lapSpread(session))}s`],
+            ]}
       />
       <Section label="Video">
         <View style={styles.videoPlaceholder}>
           <Text style={styles.placeholderTitle}>{session.videoSaved ? 'Saved to your device' : 'No video saved'}</Text>
           <Text style={styles.placeholderText}>
             {session.videoSaved
-              ? 'This app does not keep a copy — find the recording in your phone’s Photos or Files app.'
+              ? "This app does not keep a copy — find the recording in your phone's Photos or Files app."
               : 'This session does not include a recording.'}
           </Text>
         </View>
       </Section>
-      <Section label="Lap Times">
-        <LapList laps={session.laps} />
+      <Section label={isStraightLine ? 'Braking Reps' : 'Lap Times'}>
+        <LapList laps={session.laps} isStraightLine={isStraightLine} />
       </Section>
       <Section label="Notes">
         <Text style={styles.bodyText}>{session.notes ?? 'No notes saved.'}</Text>
@@ -1535,9 +1559,34 @@ const lapTagLabels: Record<'warmup' | 'cooldown' | 'break', string> = {
   break: 'Break',
 };
 
-function LapList({ laps }: { laps: { lapNumber: number; time: number; excludedFromScoring?: boolean; lapLabel?: 'warmup' | 'cooldown' | 'break' }[] }) {
+function LapList({ laps, isStraightLine }: { laps: Lap[]; isStraightLine?: boolean }) {
   const scoredTimes = laps.filter((lap) => !lap.excludedFromScoring).map((lap) => lap.time);
   const best = scoredTimes.length ? Math.min(...scoredTimes) : undefined;
+
+  if (isStraightLine) {
+    const stops = laps.map((r) => r.stoppingDistanceMeters).filter((v): v is number => v != null);
+    const bestStop = stops.length ? Math.min(...stops) : undefined;
+    return (
+      <View style={styles.lapList}>
+        {laps.map((rep) => {
+          const isBestStop = rep.stoppingDistanceMeters != null && rep.stoppingDistanceMeters === bestStop;
+          const speedStr = rep.entrySpeedKph != null
+            ? `${rep.speedMethod === 'kinematic' ? '~' : ''}${rep.entrySpeedKph.toFixed(0)} km/h`
+            : '--';
+          const stopStr = rep.stoppingDistanceMeters != null ? `${rep.stoppingDistanceMeters.toFixed(1)} m` : '--';
+          return (
+            <View key={rep.lapNumber} style={[styles.lapRow, isBestStop && styles.lapRowBest]}>
+              <Text style={[styles.lapNum, isBestStop && styles.lapTextBest]}>R{rep.lapNumber}</Text>
+              <Text style={[styles.lapTime, isBestStop && styles.lapTextBest]}>{`↓ ${speedStr}`}</Text>
+              <Text style={[styles.lapTime, isBestStop && styles.lapTextBest]}>{`◀ ${stopStr}`}</Text>
+              {isBestStop && <Text style={styles.pbText}>PB</Text>}
+            </View>
+          );
+        })}
+      </View>
+    );
+  }
+
   return (
     <View style={styles.lapList}>
       {laps.map((lap) => {
