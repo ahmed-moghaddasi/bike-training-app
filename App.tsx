@@ -27,6 +27,7 @@ import {
   sessionsForContext,
 } from './src/lib/metrics';
 import { detectLapsFromVideo, type LapDetectionDiagnostics } from './src/lib/lapDetector';
+import { DEFAULT_STRAIGHT_LINE_CONFIG } from './src/lib/straightLineDetector';
 import { getDetectionConfigForDrill } from './src/lib/detection';
 import { computeCropRectRatio } from './src/lib/detection/geometry';
 import {
@@ -681,9 +682,13 @@ function WebCameraTimer({
               width: '100%',
             },
           })}
-          <View style={[styles.timingZoneBox, zoneBoxStyle]}>
-            <View style={detection.orientation === 'vertical' ? styles.timingLineVertical : styles.timingLineHorizontal} />
-          </View>
+          {drill.timingRule.detectionMode === 'straight-line' ? (
+            <StraightLineSetupOverlay />
+          ) : (
+            <View style={[styles.timingZoneBox, zoneBoxStyle]}>
+              <View style={detection.orientation === 'vertical' ? styles.timingLineVertical : styles.timingLineHorizontal} />
+            </View>
+          )}
           {cameraState !== 'ready' && cameraState !== 'recording' && <Text style={styles.cameraOverlay}>{cameraState === 'error' ? 'Camera Error' : 'Loading'}</Text>}
         </View>
         <Text style={styles.cameraTip}>{cameraMessage}</Text>
@@ -695,6 +700,43 @@ function WebCameraTimer({
         <PrimaryButton label="Start Recording" onPress={() => void startRecording()} />
       )}
     </Page>
+  );
+}
+
+function StraightLineSetupOverlay() {
+  const cfg = DEFAULT_STRAIGHT_LINE_CONFIG;
+  const frameWidthM = 2 * cfg.cameraDistanceMeters * Math.tan((cfg.estimatedHFOVDegrees / 2) * (Math.PI / 180));
+  const halfM = Math.round(frameWidthM / 2);
+  const bandTop = `${((cfg.bandCenterRatio - cfg.bandRatio / 2) * 100).toFixed(0)}%` as `${number}%`;
+  const bandHeight = `${(cfg.bandRatio * 100).toFixed(0)}%` as `${number}%`;
+
+  return (
+    <View style={styles.slOverlay} pointerEvents="none">
+      {/* Approach zone — left half */}
+      <View style={styles.slApproachZone} />
+      {/* Stop zone — right half */}
+      <View style={styles.slStopZone} />
+      {/* Detection band — horizontal strip showing where luminance is sampled */}
+      <View style={[styles.slBand, { top: bandTop, height: bandHeight }]} />
+      {/* Cone line — center of frame, where the braking marker should appear */}
+      <View style={styles.slConeLine} />
+      {/* Labels */}
+      <View style={[styles.slLabelWrap, { left: '4%', top: '18%' }]}>
+        <Text style={styles.slLabel}>{`← ${halfM} m`}</Text>
+        <Text style={styles.slLabelSub}>approach</Text>
+      </View>
+      <View style={[styles.slLabelWrap, { alignItems: 'flex-end', right: '4%', top: '18%' }]}>
+        <Text style={styles.slLabel}>{`${halfM} m →`}</Text>
+        <Text style={styles.slLabelSub}>stop zone</Text>
+      </View>
+      <View style={styles.slConeLabel}>
+        <Text style={styles.slConeLabelText}>▲ cone</Text>
+      </View>
+      {/* Distance note */}
+      <View style={styles.slNote}>
+        <Text style={styles.slNoteText}>{`Camera ${cfg.cameraDistanceMeters} m from riding line · ${halfM} m each side of cone`}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -2036,6 +2078,90 @@ const styles = StyleSheet.create({
     right: 0,
     top: '50%',
     height: 5,
+  },
+  slOverlay: {
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  slApproachZone: {
+    backgroundColor: 'rgba(40, 120, 255, 0.10)',
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    top: 0,
+    width: '50%',
+  },
+  slStopZone: {
+    backgroundColor: 'rgba(255, 90, 0, 0.10)',
+    bottom: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    width: '50%',
+  },
+  slBand: {
+    borderBottomWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    borderTopWidth: 1,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+  },
+  slConeLine: {
+    backgroundColor: 'rgba(255, 200, 0, 0.90)',
+    bottom: 0,
+    left: '50%',
+    marginLeft: -1,
+    position: 'absolute',
+    top: 0,
+    width: 2,
+  },
+  slLabelWrap: {
+    position: 'absolute',
+  },
+  slLabel: {
+    color: 'rgba(255,255,255,0.95)',
+    fontFamily: fonts.display,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  slLabelSub: {
+    color: 'rgba(255,255,255,0.60)',
+    fontFamily: fonts.body,
+    fontSize: 10,
+    marginTop: 1,
+  },
+  slConeLabel: {
+    left: '50%',
+    marginLeft: 6,
+    position: 'absolute',
+    top: '10%',
+  },
+  slConeLabelText: {
+    color: 'rgba(255,200,0,0.95)',
+    fontFamily: fonts.display,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  slNote: {
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    bottom: 0,
+    left: 0,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    position: 'absolute',
+    right: 0,
+  },
+  slNoteText: {
+    color: 'rgba(255,255,255,0.75)',
+    fontFamily: fonts.body,
+    fontSize: 10,
+    textAlign: 'center',
   },
   cameraOverlay: {
     color: colors.white,
