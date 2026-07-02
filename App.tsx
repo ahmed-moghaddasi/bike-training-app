@@ -706,7 +706,7 @@ function WebCameraTimer({
 function StraightLineSetupOverlay() {
   const cfg = DEFAULT_STRAIGHT_LINE_CONFIG;
   const frameWidthM = 2 * cfg.cameraDistanceMeters * Math.tan((cfg.estimatedHFOVDegrees / 2) * (Math.PI / 180));
-  const halfM = Math.round(frameWidthM / 2);
+  const halfM = Math.floor(frameWidthM / 2);
   const bandTop = `${((cfg.bandCenterRatio - cfg.bandRatio / 2) * 100).toFixed(0)}%` as `${number}%`;
   const bandHeight = `${(cfg.bandRatio * 100).toFixed(0)}%` as `${number}%`;
 
