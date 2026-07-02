@@ -133,6 +133,12 @@ export type StraightLineMeasurement = {
   speedMethod: 'direct' | 'kinematic';
   /** Number of clean approach frames available for speed measurement after the entry spike. */
   approachFramesUsable: number;
+  /**
+   * True when the bike stopped at or past the far edge of the frame and the
+   * centroid at rest is the last visible position rather than the true stop point.
+   * stoppingDistanceMeters is a lower bound in this case (display as "> X m").
+   */
+  stopOffScreen: boolean;
 };
 
 export type PassDiagnostic = {
@@ -337,6 +343,7 @@ export function detectBrakingReps(frames: CapturedFrame[], config: StraightLineC
       timestampInVideo: metrics.timestampInVideo,
       speedMethod: metrics.speedMethod,
       approachFramesUsable: metrics.approachFramesUsable,
+      stopOffScreen: metrics.stopOffScreen,
     });
 
     passDiagnostics.push({
@@ -550,6 +557,7 @@ type BrakingMetrics = {
   approachSlopeStripsPerMs: number | null;
   speedMethod: 'direct' | 'kinematic';
   approachFramesUsable: number;
+  stopOffScreen: boolean;
 };
 
 function analyseBrakingRun(
@@ -570,6 +578,7 @@ function analyseBrakingRun(
     approachSlopeStripsPerMs: null,
     speedMethod: 'kinematic',
     approachFramesUsable: 0,
+    stopOffScreen: false,
   };
 
   if (centroids.length < 4) return fallback;
@@ -653,6 +662,13 @@ function analyseBrakingRun(
   const brakeTimeMs = brakeFrameIdx >= 0 ? times[brakeFrameIdx] : times[0];
   const brakingDurationMs = times[times.length - 1] - brakeTimeMs;
 
+  // Flag when the stop position is at or past the far edge: stoppingDistanceMeters
+  // is a lower bound (the true stop is off-screen).
+  const stopOffScreen =
+    direction === 'left-to-right'
+      ? stopStrip >= config.numStrips * config.farEdgeExitFraction
+      : stopStrip <= config.numStrips * (1 - config.farEdgeExitFraction);
+
   return {
     entrySpeedKph,
     stoppingDistanceMeters,
@@ -662,6 +678,7 @@ function analyseBrakingRun(
     approachSlopeStripsPerMs,
     speedMethod,
     approachFramesUsable: approachIdxs.length,
+    stopOffScreen,
   };
 }
 

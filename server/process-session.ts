@@ -77,6 +77,7 @@ async function run(sessionId: string, drillId: string, supabaseUrl: string, serv
             stopping_distance_meters: rep.stoppingDistanceMeters ?? null,
             braking_duration_ms: rep.brakingDurationMs ?? null,
             speed_method: rep.speedMethod ?? null,
+            stop_off_screen: rep.stopOffScreen ?? null,
           })),
         );
         if (lapsError) await markError(`Could not save laps: ${lapsError.message}`);

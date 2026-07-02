@@ -77,6 +77,8 @@ export type Lap = {
   stoppingDistanceMeters?: number;
   brakingDurationMs?: number;
   speedMethod?: 'direct' | 'kinematic';
+  /** True when the bike stopped at or past the far edge of frame; stoppingDistanceMeters is a lower bound. */
+  stopOffScreen?: boolean;
 };
 
 export type DetectionEvent = {

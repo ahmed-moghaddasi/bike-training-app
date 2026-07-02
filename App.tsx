@@ -1202,7 +1202,7 @@ function SessionDetailScreen({ sessionId, cloudSession, go }: { sessionId: strin
 
   const straightLineStats: [string, string][] = (() => {
     const reps = session.laps;
-    const stops = reps.map((r) => r.stoppingDistanceMeters).filter((v): v is number => v != null);
+    const stops = reps.filter((r) => !r.stopOffScreen && r.stoppingDistanceMeters != null).map((r) => r.stoppingDistanceMeters as number);
     const speeds = reps.map((r) => r.entrySpeedKph).filter((v): v is number => v != null);
     const bestStop = stops.length ? Math.min(...stops) : null;
     const avgSpeed = speeds.length ? speeds.reduce((s, v) => s + v, 0) / speeds.length : null;
@@ -1573,7 +1573,9 @@ function LapList({ laps, isStraightLine }: { laps: Lap[]; isStraightLine?: boole
           const speedStr = rep.entrySpeedKph != null
             ? `${rep.speedMethod === 'kinematic' ? '~' : ''}${rep.entrySpeedKph.toFixed(0)} km/h`
             : '--';
-          const stopStr = rep.stoppingDistanceMeters != null ? `${rep.stoppingDistanceMeters.toFixed(1)} m` : '--';
+          const stopStr = rep.stoppingDistanceMeters != null
+            ? `${rep.stopOffScreen ? '>' : ''}${rep.stoppingDistanceMeters.toFixed(1)} m`
+            : '--';
           return (
             <View key={rep.lapNumber} style={[styles.lapRow, isBestStop && styles.lapRowBest]}>
               <Text style={[styles.lapNum, isBestStop && styles.lapTextBest]}>R{rep.lapNumber}</Text>
