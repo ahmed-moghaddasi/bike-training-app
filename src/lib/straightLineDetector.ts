@@ -87,11 +87,18 @@ export type StraightLineConfig = {
   cameraDistanceMeters: number;
   /** Estimated horizontal field of view in degrees. 108° = iPhone ultra-wide (0.5×). */
   estimatedHFOVDegrees: number;
+  /**
+   * Centroid fraction threshold for flagging a stop as off-screen. Only set to
+   * true when the centroid is at ≥99% of frame width — meaning the bike physically
+   * exited the frame. Distinct from farEdgeExitFraction (used for pass classification)
+   * which is intentionally lower to trigger the end-velocity check.
+   */
+  offScreenFraction: number;
 };
 
 export const DEFAULT_STRAIGHT_LINE_CONFIG: StraightLineConfig = {
   numStrips: 40,
-  sampleHeight: 6,
+  sampleHeight: 20,
   bandCenterRatio: 0.5,
   bandRatio: 0.18,
   pixelDeltaThreshold: 16,
@@ -111,6 +118,7 @@ export const DEFAULT_STRAIGHT_LINE_CONFIG: StraightLineConfig = {
   minEntrySpeedKph: 10,
   cameraDistanceMeters: 15,
   estimatedHFOVDegrees: 108,
+  offScreenFraction: 0.99,
 };
 
 // ─── Public output types ──────────────────────────────────────────────────────
@@ -139,6 +147,13 @@ export type StraightLineMeasurement = {
    * stoppingDistanceMeters is a lower bound in this case (display as "> X m").
    */
   stopOffScreen: boolean;
+  /**
+   * Effective deceleration expressed as a g-factor: v₀² / (2 × D × 9.81).
+   * Normalises stopping distance by entry speed so reps with different approach
+   * speeds can be compared fairly. Higher = harder braking. Null if either
+   * entry speed or stopping distance could not be measured.
+   */
+  brakingScoreG: number | null;
 };
 
 export type PassDiagnostic = {
@@ -344,6 +359,7 @@ export function detectBrakingReps(frames: CapturedFrame[], config: StraightLineC
       speedMethod: metrics.speedMethod,
       approachFramesUsable: metrics.approachFramesUsable,
       stopOffScreen: metrics.stopOffScreen,
+      brakingScoreG: metrics.brakingScoreG,
     });
 
     passDiagnostics.push({
@@ -432,24 +448,47 @@ function computeFrameData(
   windowOf: (timeMs: number) => number,
   config: StraightLineConfig,
 ): FrameDatum[] {
-  const { numStrips, sampleHeight, pixelDeltaThreshold, minStripActivityRatio, minActiveStrips } = config;
+  const { numStrips, sampleHeight, pixelDeltaThreshold, minActiveStrips } = config;
+  const centroidBandRows = 4; // half-width of the narrow y-band used for x-centroid
 
   return frames.map(({ time, grid }) => {
     const baseline = baselines[windowOf(time)];
+
+    // Pass 1: find the luminance-delta y-centroid — where is the bike vertically?
+    let yWeightSum = 0;
+    let yPosSum = 0;
+    for (let y = 0; y < sampleHeight; y++) {
+      let rowDelta = 0;
+      for (let x = 0; x < numStrips; x++) {
+        const d = Math.abs(grid[y * numStrips + x] - baseline[y * numStrips + x]);
+        if (d >= pixelDeltaThreshold) rowDelta += d;
+      }
+      yPosSum += y * rowDelta;
+      yWeightSum += rowDelta;
+    }
+
+    if (yWeightSum === 0) return { timeMs: time, centroid: null, activeStripCount: 0 };
+
+    const yCentroid = yPosSum / yWeightSum;
+    const yLow = Math.max(0, Math.round(yCentroid) - centroidBandRows);
+    const yHigh = Math.min(sampleHeight - 1, Math.round(yCentroid) + centroidBandRows);
+
+    // Pass 2: x-centroid within the narrow y-band, weighted by delta magnitude.
+    // Continuous magnitude (not binary activity fraction) gives a sharper peak at
+    // the brightest horizontal feature on the bike rather than the whole silhouette.
     let weightSum = 0;
     let posSum = 0;
     let activeCount = 0;
 
     for (let x = 0; x < numStrips; x++) {
-      let changed = 0;
-      for (let y = 0; y < sampleHeight; y++) {
-        const idx = y * numStrips + x;
-        if (Math.abs(grid[idx] - baseline[idx]) >= pixelDeltaThreshold) changed++;
+      let delta = 0;
+      for (let y = yLow; y <= yHigh; y++) {
+        const d = Math.abs(grid[y * numStrips + x] - baseline[y * numStrips + x]);
+        if (d >= pixelDeltaThreshold) delta += d;
       }
-      const activity = changed / sampleHeight;
-      if (activity >= minStripActivityRatio) {
-        weightSum += activity;
-        posSum += x * activity;
+      if (delta > 0) {
+        weightSum += delta;
+        posSum += x * delta;
         activeCount++;
       }
     }
@@ -558,6 +597,7 @@ type BrakingMetrics = {
   speedMethod: 'direct' | 'kinematic';
   approachFramesUsable: number;
   stopOffScreen: boolean;
+  brakingScoreG: number | null;
 };
 
 function analyseBrakingRun(
@@ -579,6 +619,7 @@ function analyseBrakingRun(
     speedMethod: 'kinematic',
     approachFramesUsable: 0,
     stopOffScreen: false,
+    brakingScoreG: null,
   };
 
   if (centroids.length < 4) return fallback;
@@ -587,11 +628,21 @@ function analyseBrakingRun(
   const brakeStrip =
     calibratedBrakeStrip ?? (centroids[0] + centroids[centroids.length - 1]) / 2;
 
-  // Stop position = last raw centroid.
-  // At near-zero speed the entry spike has died down and the centroid tracks the
-  // bike's resting position accurately. Raw (not smoothed) avoids the moving
-  // average pulling the last value toward higher-centroid spike frames.
-  const stopStrip = centroids[centroids.length - 1];
+  // Smooth centroids once — reused for both brakeFrameIdx and findStopFrame.
+  const smoothed = movingAverage(centroids, config.velocitySmoothingFrames);
+
+  // Braking start time: first frame where smoothed centroid crosses the brake strip.
+  const brakeFrameIdx = smoothed.findIndex(
+    (c) => (direction === 'left-to-right' ? c >= brakeStrip : c <= brakeStrip),
+  );
+  const brakeTimeMs = brakeFrameIdx >= 0 ? times[brakeFrameIdx] : times[0];
+
+  // Stop position: minimum-velocity frame after the braking onset. Finds the true
+  // stop even when the rider continues forward after stopping — the velocity dips
+  // to near-zero at the stop then rises again during re-acceleration, so the
+  // global minimum of |v| after the onset is the stop frame.
+  const stopFrameIdx = findStopFrame(smoothed, times, Math.max(0, brakeFrameIdx));
+  const stopStrip = smoothed[stopFrameIdx];
   const stoppingDistanceMeters = Math.abs(stopStrip - brakeStrip) * metersPerStrip;
 
   // ── Approach phase extraction ──────────────────────────────────────────────
@@ -654,20 +705,20 @@ function analyseBrakingRun(
     speedMethod = 'kinematic';
   }
 
-  // Braking start time: first frame where centroid crosses the brake strip.
-  const smoothed = movingAverage(centroids, config.velocitySmoothingFrames);
-  const brakeFrameIdx = smoothed.findIndex(
-    (c) => (direction === 'left-to-right' ? c >= brakeStrip : c <= brakeStrip),
-  );
-  const brakeTimeMs = brakeFrameIdx >= 0 ? times[brakeFrameIdx] : times[0];
-  const brakingDurationMs = times[times.length - 1] - brakeTimeMs;
+  const brakingDurationMs = Math.max(0, times[stopFrameIdx] - brakeTimeMs);
 
-  // Flag when the stop position is at or past the far edge: stoppingDistanceMeters
-  // is a lower bound (the true stop is off-screen).
+  // Flag only when the centroid reached the very edge of frame (≥99%), meaning
+  // the bike genuinely exited. Stops at 95–98% are physically inside the frame.
   const stopOffScreen =
     direction === 'left-to-right'
-      ? stopStrip >= config.numStrips * config.farEdgeExitFraction
-      : stopStrip <= config.numStrips * (1 - config.farEdgeExitFraction);
+      ? stopStrip >= config.numStrips * config.offScreenFraction
+      : stopStrip <= config.numStrips * (1 - config.offScreenFraction);
+
+  const v0Mps = (entrySpeedKph ?? 0) / 3.6;
+  const brakingScoreG =
+    entrySpeedKph !== null && stoppingDistanceMeters > 0
+      ? (v0Mps * v0Mps) / (2 * stoppingDistanceMeters * 9.81)
+      : null;
 
   return {
     entrySpeedKph,
@@ -679,10 +730,25 @@ function analyseBrakingRun(
     speedMethod,
     approachFramesUsable: approachIdxs.length,
     stopOffScreen,
+    brakingScoreG,
   };
 }
 
 // ─── Signal utilities ─────────────────────────────────────────────────────────
+
+function findStopFrame(smoothed: number[], times: number[], onsetIdx: number): number {
+  let minAbsVel = Infinity;
+  let stopIdx = smoothed.length - 1;
+  for (let i = onsetIdx + 1; i < smoothed.length - 1; i++) {
+    const dt = Math.max(1, times[i + 1] - times[i - 1]);
+    const vel = Math.abs((smoothed[i + 1] - smoothed[i - 1]) / dt);
+    if (vel < minAbsVel) {
+      minAbsVel = vel;
+      stopIdx = i;
+    }
+  }
+  return stopIdx;
+}
 
 function movingAverage(values: number[], window: number): number[] {
   if (window <= 1 || values.length === 0) return [...values];
