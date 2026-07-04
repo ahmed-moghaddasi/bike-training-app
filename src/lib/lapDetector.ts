@@ -103,8 +103,13 @@ export async function detectLapsFromVideo(
   if (frames.length === 0) return { laps: [], detectionEvents: [], diagnostics: emptyDiagnostics };
 
   const pixelCount = detection.sampleWidth * detection.sampleHeight;
-  const { baselines, windowOf } = await computeWindowedBaselines(frames, pixelCount, detection);
-  const series = await computeChangedRatioSeries(frames, baselines, windowOf, detection);
+  const series =
+    detection.baselineMode === 'adaptive'
+      ? await computeAdaptiveChangedRatioSeries(frames, pixelCount, detection)
+      : await (async () => {
+          const { baselines, windowOf } = await computeWindowedBaselines(frames, pixelCount, detection);
+          return computeChangedRatioSeries(frames, baselines, windowOf, detection);
+        })();
   const { crossings, candidates } = detectCrossings(series, detection);
   const { laps: reducedLaps, detectionEvents, reversalBoundaries } = reduceCrossingsToLaps(
     crossings,
@@ -400,6 +405,109 @@ async function computeChangedRatioSeries(
   return results;
 }
 
+/**
+ * Alternative to computeWindowedBaselines + computeChangedRatioSeries — see
+ * DetectionConfig.baselineMode's doc comment for what this is and why it's
+ * opt-in. Tracks a running per-pixel mean/variance (a single-Gaussian
+ * approximation of OpenCV MOG2's core idea), updated a little every frame,
+ * instead of recomputing a fresh mode baseline once per fixed window. A pixel
+ * is "changed" when it deviates from its own running mean by more than
+ * adaptiveThresholdK standard deviations. The background model only updates
+ * from pixels *not* currently flagged as changed this frame — the same "don't
+ * let the subject get absorbed into its own background" principle the
+ * windowed-mode baseline achieves differently (by discarding and recomputing
+ * fresh every window instead of blending continuously).
+ */
+async function computeAdaptiveChangedRatioSeries(
+  frames: CapturedFrame[],
+  pixelCount: number,
+  detection: DetectionConfig,
+): Promise<RatioSample[]> {
+  const { sampleWidth, sampleHeight, orientation, adaptiveLearningRate, adaptiveThresholdK, adaptiveMinStdDev } = detection;
+  const halfWidth = Math.floor(sampleWidth / 2);
+  const halfHeight = Math.floor(sampleHeight / 2);
+  const primaryMask = new Uint8Array(pixelCount);
+  const secondaryMask = new Uint8Array(pixelCount);
+  const visited = new Uint8Array(pixelCount);
+  const minVariance = adaptiveMinStdDev * adaptiveMinStdDev;
+
+  const mean = new Float32Array(pixelCount);
+  const variance = new Float32Array(pixelCount).fill(minVariance);
+  let initialized = false;
+
+  const results: RatioSample[] = [];
+  for (let frameIndex = 0; frameIndex < frames.length; frameIndex += 1) {
+    const { time, grid, markerMatch } = frames[frameIndex];
+    if (!initialized) {
+      mean.set(grid);
+      initialized = true;
+    }
+
+    let primaryChanged = 0;
+    let secondaryChanged = 0;
+    let primaryPixels = 0;
+    let secondaryPixels = 0;
+    primaryMask.fill(0);
+    secondaryMask.fill(0);
+
+    for (let index = 0; index < grid.length; index += 1) {
+      const pixel = grid[index];
+      const stdDev = Math.max(adaptiveMinStdDev, Math.sqrt(variance[index]));
+      const delta = pixel - mean[index];
+      const lumaChanged = Math.abs(delta) > adaptiveThresholdK * stdDev;
+      // OR, not replace — same reasoning as the windowed-mode path: the
+      // marker (when configured) still helps if the rider's body blocks it.
+      const changed = lumaChanged || (markerMatch ? markerMatch[index] === 1 : false);
+
+      if (!lumaChanged) {
+        mean[index] += adaptiveLearningRate * delta;
+        variance[index] = Math.max(minVariance, (1 - adaptiveLearningRate) * (variance[index] + adaptiveLearningRate * delta * delta));
+      }
+
+      const isPrimary = orientation === 'vertical' ? index % sampleWidth < halfWidth : Math.floor(index / sampleWidth) < halfHeight;
+      if (isPrimary) {
+        primaryPixels += 1;
+        if (changed) {
+          primaryChanged += 1;
+          primaryMask[index] = 1;
+        }
+      } else {
+        secondaryPixels += 1;
+        if (changed) {
+          secondaryChanged += 1;
+          secondaryMask[index] = 1;
+        }
+      }
+    }
+
+    results.push({
+      time,
+      primaryRatio: primaryPixels ? primaryChanged / primaryPixels : 0,
+      secondaryRatio: secondaryPixels ? secondaryChanged / secondaryPixels : 0,
+      primaryBlobArea: largestBlobArea(primaryMask, visited, sampleWidth, sampleHeight),
+      secondaryBlobArea: largestBlobArea(secondaryMask, visited, sampleWidth, sampleHeight),
+    });
+    if (frameIndex % YIELD_EVERY_N_FRAMES === 0) await yieldToMainThread();
+  }
+  return results;
+}
+
+/**
+ * Linearly interpolates the instant a signal crossed `threshold` between two
+ * samples straddling it, instead of snapping to whichever sample's timestamp
+ * happens to land on or after the threshold — the same trick precision timing
+ * gear (phase/pitch detectors) uses to get resolution finer than the sample
+ * rate. Falls back to `currTime` if the two ratios are equal (can't
+ * interpolate a zero-slope crossing) or the crossing already happened at or
+ * before the previous sample (ratio started above threshold).
+ */
+function interpolateThresholdCrossing(prevRatio: number, currRatio: number, threshold: number, prevTime: number, currTime: number): number {
+  if (currRatio === prevRatio) return currTime;
+  const fraction = (threshold - prevRatio) / (currRatio - prevRatio);
+  if (!Number.isFinite(fraction) || fraction <= 0 || fraction >= 1) return currTime;
+  return prevTime + fraction * (currTime - prevTime);
+}
+
 type RawCandidate = {
   half: 'primary' | 'secondary' | 'both';
   startTime: number;
@@ -425,6 +533,13 @@ function detectCrossings(series: RatioSample[], detection: DetectionConfig): { c
   const candidates: RawCandidate[] = [];
   let primaryActiveSince: number | null = null;
   let secondaryActiveSince: number | null = null;
+  // The sub-frame instant each half's ratio actually crossed changedRatioThreshold
+  // (interpolated between the last below-threshold sample and this one), kept in
+  // lockstep with *ActiveSince's reset semantics above. minActiveMs's confirmation
+  // check still runs on the frame-quantized *ActiveSince — this only refines what
+  // gets recorded as the crossing's time once confirmed, not which crossings confirm.
+  let primaryEdgeTime: number | null = null;
+  let secondaryEdgeTime: number | null = null;
   let pendingHalf: 'primary' | 'secondary' | null = null;
   let pendingSince = 0;
   let lastCrossingAt = Number.NEGATIVE_INFINITY;
@@ -462,8 +577,30 @@ function detectCrossings(series: RatioSample[], detection: DetectionConfig): { c
     const primaryActive = primaryRatio >= changedRatioThreshold;
     const secondaryActive = secondaryRatio >= changedRatioThreshold;
 
-    primaryActiveSince = primaryActive ? primaryActiveSince ?? time : null;
-    secondaryActiveSince = secondaryActive ? secondaryActiveSince ?? time : null;
+    if (primaryActive) {
+      if (primaryActiveSince === null) {
+        primaryActiveSince = time;
+        primaryEdgeTime =
+          i > 0
+            ? interpolateThresholdCrossing(series[i - 1].primaryRatio, primaryRatio, changedRatioThreshold, series[i - 1].time, time)
+            : time;
+      }
+    } else {
+      primaryActiveSince = null;
+      primaryEdgeTime = null;
+    }
+    if (secondaryActive) {
+      if (secondaryActiveSince === null) {
+        secondaryActiveSince = time;
+        secondaryEdgeTime =
+          i > 0
+            ? interpolateThresholdCrossing(series[i - 1].secondaryRatio, secondaryRatio, changedRatioThreshold, series[i - 1].time, time)
+            : time;
+      }
+    } else {
+      secondaryActiveSince = null;
+      secondaryEdgeTime = null;
+    }
 
     if (pendingHalf && time - pendingSince > sequenceTimeoutMs) {
       candidates.push({ half: pendingHalf, startTime: pendingSince, outcome: 'sequence-timeout' });
@@ -508,10 +645,17 @@ function detectCrossings(series: RatioSample[], detection: DetectionConfig): { c
       pendingHalf = null;
       primaryActiveSince = null;
       secondaryActiveSince = null;
+      primaryEdgeTime = null;
+      secondaryEdgeTime = null;
     } else if (direction && decaysWithinWindow(series, i, changedRatioThreshold, decayWindowMs)) {
       const peakBlobArea = Math.max(series[i].primaryBlobArea, series[i].secondaryBlobArea);
       if (isBlobLargeEnough(peakBlobArea)) {
-        crossings.push({ time, direction, score: Math.max(primaryRatio, secondaryRatio) / changedRatioThreshold });
+        // The confirming half's interpolated threshold-crossing instant is the
+        // physically meaningful "it crossed the line" moment — minActiveMs's
+        // frame-quantized confirmation delay (used above only to gate against
+        // noise) would otherwise get baked into every reported timestamp.
+        const edgeTime = (direction === 'primary-to-secondary' ? secondaryEdgeTime : primaryEdgeTime) ?? time;
+        crossings.push({ time: edgeTime, direction, score: Math.max(primaryRatio, secondaryRatio) / changedRatioThreshold });
         candidates.push({ half: pendingHalf!, startTime: pendingSince, outcome: 'confirmed', confirmedAt: time });
         lastCrossingAt = time;
         lastConfirmedDirection = direction;
@@ -519,6 +663,8 @@ function detectCrossings(series: RatioSample[], detection: DetectionConfig): { c
         pendingHalf = null;
         primaryActiveSince = null;
         secondaryActiveSince = null;
+        primaryEdgeTime = null;
+        secondaryEdgeTime = null;
       } else {
         // Changed pixels never formed one bike-sized region — likely scattered
         // noise (dust, grass motion) rather than the bike itself.

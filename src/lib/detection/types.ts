@@ -44,6 +44,27 @@ export type DetectionConfig = {
    * the background.
    */
   baselineWindowSeconds: number;
+  /**
+   * Which background-modeling strategy computeLapsFromVideo uses to decide
+   * "changed" per pixel. 'windowed-mode' (the default, and every shipped
+   * drill's validated behavior) is the mechanism baselineWindowSeconds
+   * documents above. 'adaptive' is a lightweight per-pixel running mean/
+   * variance tracker (a single-Gaussian approximation of the same idea behind
+   * OpenCV's MOG2 background subtractor) that updates a little every frame
+   * instead of snapping between fixed windows — in principle more graceful
+   * under continuous lighting drift (e.g. a session shot through dusk), but
+   * it has not been validated against any real ground-truth clip yet. Opt-in
+   * and defaulted to 'windowed-mode' so no existing drill's behavior changes;
+   * follow the camera-lap-timer skill's tuning process against real footage
+   * before switching any drill to 'adaptive'.
+   */
+  baselineMode: 'windowed-mode' | 'adaptive';
+  /** 'adaptive' baselineMode only: how fast each pixel's running mean/variance drifts toward new values per frame (0-1; higher adapts faster but risks absorbing a slow-moving subject into the background). */
+  adaptiveLearningRate: number;
+  /** 'adaptive' baselineMode only: a pixel counts as changed when it deviates from its running mean by more than this many standard deviations. */
+  adaptiveThresholdK: number;
+  /** 'adaptive' baselineMode only: floor on a pixel's standard deviation (luminance units) so a perfectly static pixel with near-zero variance doesn't become hypersensitive to the slightest noise. */
+  adaptiveMinStdDev: number;
   /** Video playback speed used while decoding for analysis — higher finishes faster but can drop frames if the browser can't keep up. */
   playbackRate: number;
   /**
@@ -196,6 +217,10 @@ export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
   decayWindowMs: 1_000,
   modeBinCount: 32,
   baselineWindowSeconds: 12,
+  baselineMode: 'windowed-mode',
+  adaptiveLearningRate: 0.02,
+  adaptiveThresholdK: 4,
+  adaptiveMinStdDev: 3,
   duplicateDirectionWindowMs: 0,
   minBlobAreaPixels: 0,
   minBlobAreaFraction: 0.2,

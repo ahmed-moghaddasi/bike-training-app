@@ -13,7 +13,11 @@ export const CAMERA_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   facingMode: { ideal: "environment" },
   width: { ideal: 960 },
   height: { ideal: 720 },
-  frameRate: { ideal: 30 },
+  // 'ideal' (not 'exact') — the device/browser is free to fall back to
+  // whatever it actually supports, this never hard-fails. A higher captured
+  // frame rate directly shrinks both crossing-timing quantization and the
+  // motion-blur smear in the speed centroid, for whatever devices grant it.
+  frameRate: { ideal: 60 },
 };
 
 export const CAMERA_MEDIA_CONSTRAINTS: MediaStreamConstraints = {
