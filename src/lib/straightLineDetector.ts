@@ -88,6 +88,14 @@ export type StraightLineConfig = {
   /** Estimated horizontal field of view in degrees. 108° = iPhone ultra-wide (0.5×). */
   estimatedHFOVDegrees: number;
   /**
+   * Directly calibrated frame width (metres) at the riding line — takes priority
+   * over cameraDistanceMeters/estimatedHFOVDegrees when set. Derived by measuring
+   * a real object of known size in the actual footage (e.g. the bike's wheelbase
+   * of 1170mm): frameWidthMeters = 1.170 × (source_frame_width_px / wheelbase_px).
+   * Eliminates compounded errors from imprecise camera distance and lens FOV guesses.
+   */
+  frameWidthMetersOverride?: number;
+  /**
    * Centroid fraction threshold for flagging a stop as off-screen. Only set to
    * true when the centroid is at ≥99% of frame width — meaning the bike physically
    * exited the frame. Distinct from farEdgeExitFraction (used for pass classification)
@@ -255,6 +263,7 @@ export function toFrameExtractionConfig(config: StraightLineConfig): DetectionCo
 export function detectBrakingReps(frames: CapturedFrame[], config: StraightLineConfig): StraightLineResult {
   const { numStrips } = config;
   const frameWidthMeters =
+    config.frameWidthMetersOverride ??
     2 * config.cameraDistanceMeters * Math.tan((config.estimatedHFOVDegrees / 2) * (Math.PI / 180));
   const metersPerStrip = frameWidthMeters / numStrips;
 
