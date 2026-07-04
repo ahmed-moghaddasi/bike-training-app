@@ -44,20 +44,45 @@ export type LoopSpeedConfig = {
    * to a fixed trim since Loop has no braking marker to calibrate against).
    */
   edgeTrimFraction: number;
-  /** Camera distance from the riding line in metres. */
+  /** Camera distance from the riding line in metres. Only used as a fallback when frameWidthMetersOverride isn't set. */
   cameraDistanceMeters: number;
-  /** Estimated horizontal field of view in degrees. */
+  /** Estimated horizontal field of view in degrees. Only used as a fallback when frameWidthMetersOverride isn't set. */
   estimatedHFOVDegrees: number;
+  /**
+   * Directly calibrated frame width (metres) at the riding line, when known —
+   * takes priority over cameraDistanceMeters/estimatedHFOVDegrees when set
+   * (see detectLoopSpeeds). Derived by measuring a real object of known size
+   * in the actual footage instead of assuming a camera distance and lens
+   * angle and multiplying them together — every error in either of those two
+   * guesses otherwise compounds directly into the speed number. Undefined
+   * falls back to the distance/FOV guess below.
+   */
+  frameWidthMetersOverride?: number;
 };
 
 /**
- * Starting values pending validation against the July 3rd 2026 ground-truth
- * clip. cameraDistanceMeters (8) and the 1x-zoom lens are as described by
- * the rider; estimatedHFOVDegrees (~65-66 deg for an iPhone main/1x lens,
- * vs. Straight Line's 108 deg for 0.5x ultra-wide) is a rough placeholder —
- * no independent speed ground truth exists yet, so this can only be
- * order-of-magnitude checked, not tuned exactly, until a known real-world
- * reference distance (e.g. cone spacing) is available.
+ * cameraDistanceMeters (8) is as described by the rider; estimatedHFOVDegrees
+ * (65, an iPhone main/1x lens guess) is now known to be wrong — see
+ * frameWidthMetersOverride below — and is kept only as the fallback formula's
+ * input for a future session with a different, uncalibrated setup.
+ *
+ * frameWidthMetersOverride (20.61m) is calibrated from the rider's own bike:
+ * a 2024 YCF SM 190 Daytona's published wheelbase (1.170m) measured against
+ * three real crossings in the July 3rd 2026 ground-truth clip (front/rear
+ * wheel-center pixel spans of ~108.5px, ~109.3px, ~120px out of the 1920px-
+ * wide source frame — averaged to ~109px from the two cleanest, least-
+ * motion-blurred measurements). frameWidthMeters = wheelbase_m ×
+ * (frame_width_px / measured_wheelbase_px) — this ratio is resolution-
+ * independent (both sides scale together), so it doesn't matter that the
+ * measurement was done on full-resolution frames while detection runs on a
+ * downsampled copy.
+ *
+ * This came out to ~20.6m — roughly 2x the old guess-based 10.2m, implying
+ * an actual horizontal field of view around 104° at 8m, not 65°. That's much
+ * closer to an ultra-wide (0.5x) lens's typical FOV than the 1x lens
+ * originally assumed, which the rider was already unsure about ("I don't
+ * remember if I had the camera on 0.5 zoom or 1.0 zoom"). Net effect: every
+ * previously reported Loop speed was very likely about half the real value.
  */
 export const DEFAULT_LOOP_SPEED_CONFIG: LoopSpeedConfig = {
   numStrips: 40,
@@ -74,6 +99,7 @@ export const DEFAULT_LOOP_SPEED_CONFIG: LoopSpeedConfig = {
   edgeTrimFraction: 0.15,
   cameraDistanceMeters: 8,
   estimatedHFOVDegrees: 65,
+  frameWidthMetersOverride: 20.61,
 };
 
 export type LoopSpeedMeasurement = {
@@ -116,6 +142,7 @@ type Pass = { startMs: number; endMs: number; durationMs: number; frameData: Fra
 
 export function detectLoopSpeeds(frames: CapturedFrame[], config: LoopSpeedConfig): LoopSpeedResult {
   const frameWidthMeters =
+    config.frameWidthMetersOverride ??
     2 * config.cameraDistanceMeters * Math.tan((config.estimatedHFOVDegrees / 2) * (Math.PI / 180));
   const metersPerStrip = frameWidthMeters / config.numStrips;
 
