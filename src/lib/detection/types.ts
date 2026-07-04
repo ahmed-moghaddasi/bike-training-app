@@ -164,6 +164,21 @@ export type DetectionConfig = {
   breakRollingWindowSize: number;
   /** How many normal laps must already be seen before a lap can be judged a break — no baseline yet before that. */
   breakBootstrapCount: number;
+  /**
+   * Treats a confirmed crossing whose direction differs from the session's
+   * established direction as the start of a brand-new segment (fresh
+   * warmup/cooldown pair), instead of counting it toward the in-progress lap.
+   *
+   * Only meaningful for a drill where every lap is expected to cross the
+   * *same* direction every time (e.g. Loop: the camera watches one point on
+   * a continuous loop, so the rider passes it going the same way lap after
+   * lap — a direction change means they turned around and are now circuiting
+   * the other way). Enabling this for a drill that alternates direction *by
+   * design* every lap (Circle: one full lap crosses the screen's line once
+   * each way) would treat every single lap as a reversal and never let a
+   * segment grow past one lap — defaults to false for exactly that reason.
+   */
+  directionReversalStartsNewSegment: boolean;
 };
 
 export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
@@ -191,6 +206,7 @@ export const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
   breakMultiplier: 1.8,
   breakRollingWindowSize: 6,
   breakBootstrapCount: 2,
+  directionReversalStartsNewSegment: false,
   // 8x caused the browser to drop the vast majority of decoded frames during
   // requestVideoFrameCallback (verified: re-running the same clip at 8x
   // produced a different frame count each time — 577 vs 1149 frames over the

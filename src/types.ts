@@ -1,4 +1,4 @@
-export type DiagramKey = 'circle' | 'figure-eight' | 'hairpin' | 'l-turn' | 'straight-line';
+export type DiagramKey = 'circle' | 'figure-eight' | 'hairpin' | 'l-turn' | 'straight-line' | 'loop';
 
 export type DrillGroup = 'foundations' | 'race-craft';
 

@@ -103,6 +103,65 @@ export const drills: Drill[] = [
     ],
   },
   {
+    id: 'loop',
+    name: 'Loop',
+    group: 'foundations',
+    isReady: true,
+    shortDescription: 'Ride a continuous loop while the camera, placed inside it, times every pass and measures speed.',
+    diagramKey: 'loop',
+    defaultSetupVariantId: 'loop-default',
+    whatThisTrains: [
+      'Consistent lap pace on a full-size loop',
+      'Comfort riding both directions around a loop',
+      'Building speed through repetition',
+    ],
+    whyItMatters:
+      'A loop is the closest parking-lot analog to a real track lap — the rider has to hold pace and line over and over, not just for one clean corner.',
+    setupVariants: [
+      {
+        id: 'loop-default',
+        drillId: 'loop',
+        name: 'Default loop',
+        coneCount: 0,
+        measurements: ['Camera placed inside the loop, ~8m from the riding line, aimed at one straight'],
+        isDefault: true,
+      },
+    ],
+    conePlacementSteps: [
+      'Lay out the loop with whatever markers define your space.',
+      'Pick one straight section the camera can see clearly.',
+      'Place a single cone on that straight as the timing marker.',
+    ],
+    cameraPlacement: {
+      positionDescription: 'Tripod inside the loop, low and close (~8m) to the riding line, aimed out at one straight.',
+      whatCameraShouldSee: ['The timing cone clearly', 'The bike crossing fully left-to-right or right-to-left'],
+      timingPoint: 'The cone on the straight the camera is aimed at.',
+      detectionZoneSuggestion: 'A vertical line through the timing cone.',
+    },
+    timingRule: {
+      startRule: 'Timer starts on the first detected pass through the timing point.',
+      lapRule: 'Each later pass through the same point is one lap. Changing which way you go around the loop starts a new session (new warmup).',
+      comparisonContext: 'Same drill + same loop layout.',
+      detectionsPerLap: 1,
+    },
+    howToRideSteps: [
+      'Settle into a consistent line before the first timed pass.',
+      'Hold a repeatable pace lap after lap.',
+      'Ride both directions across a session if you want — just expect a fresh warmup lap after you switch.',
+    ],
+    coachingCues: ['Same line, same throttle, every lap.', 'Consistency first, speed second.'],
+    commonMistakes: ['Line drifting wider each lap', 'Inconsistent pace lap to lap'],
+    reviewPrompts: ['Does the line stay the same every lap?', 'Is pace consistent or trailing off?'],
+    successMetrics: ['Lap times trending faster', 'Consistent line every lap'],
+    progressions: [
+      {
+        title: 'Clean faster laps',
+        description: 'Keep riding while lap times trend faster and the line stays repeatable.',
+        comparisonType: 'sameTimingContext',
+      },
+    ],
+  },
+  {
     id: 'figure-eight',
     name: 'Figure Eight',
     group: 'foundations',

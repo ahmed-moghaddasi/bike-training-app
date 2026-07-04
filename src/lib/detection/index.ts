@@ -3,6 +3,7 @@ import { circleDetectionConfig } from './drills/circle';
 import { figureEightDetectionConfig } from './drills/figure-eight';
 import { hairpinDetectionConfig } from './drills/hairpin';
 import { lTurnDetectionConfig } from './drills/l-turn';
+import { loopDetectionConfig } from './drills/loop';
 import { straightLineDetectionConfig } from './drills/straight-line';
 
 const overridesByDrillId: Record<string, Partial<DetectionConfig>> = {
@@ -10,6 +11,7 @@ const overridesByDrillId: Record<string, Partial<DetectionConfig>> = {
   'figure-eight': figureEightDetectionConfig,
   hairpin: hairpinDetectionConfig,
   'l-turn': lTurnDetectionConfig,
+  loop: loopDetectionConfig,
   'straight-line': straightLineDetectionConfig,
 };
 

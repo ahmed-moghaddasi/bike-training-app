@@ -27,6 +27,7 @@ import {
   sessionsForContext,
 } from './src/lib/metrics';
 import { detectLapsFromVideo, type LapDetectionDiagnostics } from './src/lib/lapDetector';
+import { detectLoopLaps } from './src/lib/loopDetector';
 import { DEFAULT_STRAIGHT_LINE_CONFIG } from './src/lib/straightLineDetector';
 import { getDetectionConfigForDrill } from './src/lib/detection';
 import { computeCropRectRatio } from './src/lib/detection/geometry';
@@ -1055,11 +1056,14 @@ function DebugReprocessScreen() {
     setStatus('processing');
     setErrorMessage(null);
     try {
-      const result = await detectLapsFromVideo(uri, {
-        detection: getDetectionConfigForDrill(targetDrill.id),
-        detectionsPerLap: targetDrill.timingRule.detectionsPerLap ?? 1,
-        recordingStartedAt: new Date().toISOString(),
-      });
+      const result =
+        targetDrill.id === 'loop'
+          ? await detectLoopLaps(uri, { recordingStartedAt: new Date().toISOString() })
+          : await detectLapsFromVideo(uri, {
+              detection: getDetectionConfigForDrill(targetDrill.id),
+              detectionsPerLap: targetDrill.timingRule.detectionsPerLap ?? 1,
+              recordingStartedAt: new Date().toISOString(),
+            });
       setLaps(result.laps);
       setEvents(result.detectionEvents);
       setDiagnostics(result.diagnostics);
@@ -1640,6 +1644,7 @@ function LapList({ laps, isStraightLine }: { laps: Lap[]; isStraightLine?: boole
           <View key={lap.lapNumber} style={[styles.lapRow, isBest && styles.lapRowBest]}>
             <Text style={[styles.lapNum, isBest && styles.lapTextBest]}>L{lap.lapNumber}</Text>
             <Text style={[styles.lapTime, isBest && styles.lapTextBest]}>{formatLap(lap.time)}</Text>
+            {lap.entrySpeedKph != null && <Text style={styles.lapSpeed}>{lap.entrySpeedKph.toFixed(0)} km/h</Text>}
             {isBest && <Text style={styles.pbText}>PB</Text>}
             {tag && <Text style={styles.lapTag}>{tag}</Text>}
           </View>
@@ -2367,6 +2372,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
+  },
+  lapSpeed: {
+    color: colors.silverDark,
+    fontFamily: fonts.mono,
+    fontSize: 13,
+    fontWeight: '600',
   },
   filterRow: {
     flexDirection: 'row',

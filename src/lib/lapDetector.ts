@@ -49,6 +49,8 @@ export type LapDetectionDiagnostics = {
   candidates: CandidateLog[];
   /** Full per-frame signal, downsampled to at most ~500 points so the export stays small. */
   series: Array<{ timeSeconds: number; primaryRatio: number; secondaryRatio: number; primaryBlobArea: number; secondaryBlobArea: number }>;
+  /** How many times a confirmed crossing's direction differed from the session's established direction — see DetectionConfig.directionReversalStartsNewSegment. Always 0 when that flag is off. */
+  directionReversals: number;
 };
 
 export type CapturedFrame = { time: number; grid: Float32Array; markerMatch?: Uint8Array };
@@ -94,6 +96,7 @@ export async function detectLapsFromVideo(
     config: detection,
     candidates: [],
     series: [],
+    directionReversals: 0,
   };
 
   const frames = await frameExtractor(videoUri, detection);
@@ -103,9 +106,14 @@ export async function detectLapsFromVideo(
   const { baselines, windowOf } = await computeWindowedBaselines(frames, pixelCount, detection);
   const series = await computeChangedRatioSeries(frames, baselines, windowOf, detection);
   const { crossings, candidates } = detectCrossings(series, detection);
-  const result = reduceCrossingsToLaps(crossings, Math.max(1, config.detectionsPerLap), config.recordingStartedAt);
+  const { laps: reducedLaps, detectionEvents, reversalBoundaries } = reduceCrossingsToLaps(
+    crossings,
+    Math.max(1, config.detectionsPerLap),
+    config.recordingStartedAt,
+    detection.directionReversalStartsNewSegment,
+  );
   const candidateTimesSeconds = candidates.map((candidate) => candidate.startTime / 1000).sort((a, b) => a - b);
-  result.laps = markLapSegments(result.laps, detection, candidateTimesSeconds);
+  const laps = markLapSegments(reducedLaps, detection, candidateTimesSeconds, reversalBoundaries);
 
   const diagnostics: LapDetectionDiagnostics = {
     frameCount: frames.length,
@@ -127,9 +135,10 @@ export async function detectLapsFromVideo(
       primaryBlobArea: sample.primaryBlobArea,
       secondaryBlobArea: sample.secondaryBlobArea,
     })),
+    directionReversals: reversalBoundaries.length,
   };
 
-  return { ...result, diagnostics };
+  return { laps, detectionEvents, diagnostics };
 }
 
 /** Keeps the exported debug file readable/small even for an 8-minute clip. */
@@ -143,7 +152,7 @@ function downsampleSeriesForExport(series: RatioSample[], maxPoints = 500): Rati
   return sampled;
 }
 
-function extractFrames(videoUri: string, detection: DetectionConfig): Promise<CapturedFrame[]> {
+export function extractFrames(videoUri: string, detection: DetectionConfig): Promise<CapturedFrame[]> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video') as VideoWithFrameCallback;
     video.src = videoUri;
@@ -552,10 +561,12 @@ function reduceCrossingsToLaps(
   crossings: Crossing[],
   detectionsPerLap: number,
   recordingStartedAt: string,
-): { laps: Lap[]; detectionEvents: DetectionEvent[] } {
+  directionReversalStartsNewSegment: boolean,
+): { laps: Lap[]; detectionEvents: DetectionEvent[]; reversalBoundaries: number[] } {
   const laps: Lap[] = [];
   const detectionEvents: DetectionEvent[] = [];
-  if (crossings.length === 0) return { laps, detectionEvents };
+  const reversalBoundaries: number[] = [];
+  if (crossings.length === 0) return { laps, detectionEvents, reversalBoundaries };
 
   // Crossing times are in ms (to compare against the *Ms thresholds above);
   // Lap/DetectionEvent timestamps are in seconds, matching the rest of the app.
@@ -571,10 +582,29 @@ function reduceCrossingsToLaps(
     score: first.score,
   });
 
+  let establishedDirection = first.direction;
   let lastLapAt = first.time;
   let passesSinceLap = 0;
   for (let i = 1; i < crossings.length; i += 1) {
     const crossing = crossings[i];
+
+    if (directionReversalStartsNewSegment && crossing.direction !== establishedDirection) {
+      // The rider reversed which way they're going around the loop — this
+      // crossing starts a fresh segment (its own warmup/cooldown pair via
+      // markLapSegments), not a continuation of the lap in progress.
+      reversalBoundaries.push(laps.length);
+      detectionEvents.push({
+        eventType: 'sessionStart',
+        detectedAt: toIso(crossing.time),
+        videoTimestamp: toSeconds(crossing.time),
+        score: crossing.score,
+      });
+      establishedDirection = crossing.direction;
+      lastLapAt = crossing.time;
+      passesSinceLap = 0;
+      continue;
+    }
+
     passesSinceLap += 1;
     if (passesSinceLap < detectionsPerLap) continue;
     passesSinceLap = 0;
@@ -592,7 +622,7 @@ function reduceCrossingsToLaps(
     lastLapAt = crossing.time;
   }
 
-  return { laps, detectionEvents };
+  return { laps, detectionEvents, reversalBoundaries };
 }
 
 /**
@@ -624,8 +654,21 @@ function reduceCrossingsToLaps(
  * otherwise it's left alone exactly as before this feature existed (an
  * unflagged, if inaccurate, long lap), which is the safe fallback when the
  * evidence for a real pause isn't there.
+ *
+ * `reversalBoundaries` (from reduceCrossingsToLaps, only non-empty when
+ * detection.directionReversalStartsNewSegment is on) marks the same kind of
+ * segment split as a break, for a different reason: the rider reversed
+ * direction instead of pausing. Each entry `k` means "lap index k is the
+ * first lap of a new segment" — unlike a break, no lap sits exactly at the
+ * split (nothing was corrupted by it), so it contributes a boundary value
+ * without ever getting a 'break' label.
  */
-function markLapSegments(laps: Lap[], detection: DetectionConfig, candidateTimesSeconds: number[]): Lap[] {
+function markLapSegments(
+  laps: Lap[],
+  detection: DetectionConfig,
+  candidateTimesSeconds: number[],
+  reversalBoundaries: number[] = [],
+): Lap[] {
   if (laps.length <= 2) return laps;
 
   function hasQuietGap(windowStart: number, windowEnd: number, minGapSeconds: number): boolean {
@@ -661,14 +704,37 @@ function markLapSegments(laps: Lap[], detection: DetectionConfig, candidateTimes
     breakIndices.has(index) ? { ...lap, lapLabel: 'break' as const, excludedFromScoring: true } : lap,
   );
 
-  // Segment boundaries: start of array, each break, end of array — label
-  // each segment's first/last lap warmup/cooldown, same rule as before just
-  // applied once per segment instead of once for the whole session.
-  const boundaries = [-1, ...Array.from(breakIndices).sort((a, b) => a - b), laps.length];
-  for (let b = 0; b < boundaries.length - 1; b += 1) {
-    const segmentStart = boundaries[b] + 1;
-    const segmentEnd = boundaries[b + 1] - 1;
-    if (segmentStart > segmentEnd) continue; // two breaks back to back, no laps between
+  // Break boundaries: a break index is a real, excluded lap — segments on
+  // either side stop one short of it (segmentEnd = breakIndex - 1) and
+  // resume one past it (segmentStart = breakIndex + 1).
+  const breakBoundaries = [-1, ...Array.from(breakIndices).sort((a, b) => a - b), laps.length];
+  const breakSegments: Array<[number, number]> = [];
+  for (let b = 0; b < breakBoundaries.length - 1; b += 1) {
+    const segmentStart = breakBoundaries[b] + 1;
+    const segmentEnd = breakBoundaries[b + 1] - 1;
+    if (segmentStart <= segmentEnd) breakSegments.push([segmentStart, segmentEnd]);
+  }
+
+  // Reversal boundaries are a plain cut, not an excluded lap: lap k-1 ends
+  // one segment and lap k starts the next, with no gap between them. Rather
+  // than force that into the break boundaries' "excluded index" shape (which
+  // needs a one-index gap and silently drops a lap if reused for a zero-gap
+  // cut), split each break-derived segment on any reversal boundary that
+  // falls inside it.
+  const sortedReversals = [...reversalBoundaries].sort((a, b) => a - b);
+  const segments: Array<[number, number]> = [];
+  for (const [segStart, segEnd] of breakSegments) {
+    let cursor = segStart;
+    for (const k of sortedReversals) {
+      if (k > cursor && k <= segEnd) {
+        segments.push([cursor, k - 1]);
+        cursor = k;
+      }
+    }
+    segments.push([cursor, segEnd]);
+  }
+
+  for (const [segmentStart, segmentEnd] of segments) {
     const segmentLength = segmentEnd - segmentStart + 1;
     if (segmentLength <= 2) {
       // Too short to distinguish a real effort from settling in — exclude the whole thing.

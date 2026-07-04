@@ -1,18 +1,26 @@
 // Throwaway local test harness — not part of the deployed worker. Run with:
 //   npx tsx test-local.ts "<path to a test clip>" [drillId]
 // drillId defaults to 'circle'; pass any id from src/data/seed.ts's drills list
-// (e.g. figure-eight, hairpin, l-turn, straight-line) to test a different drill's config.
+// (e.g. figure-eight, hairpin, l-turn, loop, straight-line) to test a different drill's config.
 // Exercises the real ffmpeg-based extraction + full detection pipeline against
 // a local file, without touching Supabase at all.
 import { drills } from '../src/data/seed';
 import { getDetectionConfigForDrill } from '../src/lib/detection';
 import { detectLapsFromVideo } from '../src/lib/lapDetector';
+import { detectLoopLaps } from '../src/lib/loopDetector';
 import {
   DEFAULT_STRAIGHT_LINE_CONFIG,
   detectBrakingReps,
   toFrameExtractionConfig,
 } from '../src/lib/straightLineDetector';
 import { createFfmpegExtractor, extractFramesWithFfmpeg } from './ffmpegFrames';
+
+/** mm:ss.ss, matching the format hand-timed ground-truth notes use for video timestamps. */
+function formatTimestamp(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds - minutes * 60;
+  return `${minutes}:${rest.toFixed(2).padStart(5, '0')}`;
+}
 
 async function main() {
   const videoPath = process.argv[2];
@@ -61,6 +69,34 @@ async function main() {
     for (const rep of result.reps) {
       console.log(
         `  Rep ${rep.repNumber}: speed=${rep.entrySpeedKph?.toFixed(1) ?? '-'} km/h  stop=${rep.stoppingDistanceMeters?.toFixed(2) ?? '-'} m  brakingDuration=${rep.brakingDurationMs ? (rep.brakingDurationMs / 1000).toFixed(2) : '-'}s  @${(rep.timestampInVideo / 1000).toFixed(1)}s`,
+      );
+    }
+    return;
+  }
+
+  if (drillId === 'loop') {
+    // 60fps (vs. the 30fps default) roughly doubles crossing-timestamp
+    // precision — worthwhile here since a pass through the zone is only ~2s.
+    const extractor = createFfmpegExtractor(60);
+    const result = await detectLoopLaps(videoPath, { recordingStartedAt: new Date().toISOString() }, extractor);
+    const elapsed = (Date.now() - start) / 1000;
+
+    console.log(`Processed in ${elapsed.toFixed(1)}s (wall clock)`);
+    console.log(
+      `frameCount=${result.diagnostics.frameCount}  clipDuration=${result.diagnostics.clipDurationSeconds.toFixed(1)}s` +
+      `  directionReversals=${result.diagnostics.directionReversals}`,
+    );
+    console.log(
+      `speedFrameCount=${result.speedDiagnostics.frameCount}  frameWidth=${result.speedDiagnostics.frameWidthMeters.toFixed(1)}m` +
+      `  metersPerStrip=${result.speedDiagnostics.metersPerStrip.toFixed(2)}m`,
+    );
+    console.log(`\nLaps (${result.laps.length} detected):`);
+    for (const lap of result.laps) {
+      const ts = lap.timestampInVideo !== undefined ? formatTimestamp(lap.timestampInVideo) : '?';
+      const speed = lap.entrySpeedKph !== undefined ? `${lap.entrySpeedKph.toFixed(1)} km/h` : '-';
+      console.log(
+        `  L${lap.lapNumber}: ${lap.time.toFixed(2)}s${lap.lapLabel ? ` (${lap.lapLabel})` : ''}` +
+        `  @${ts}  speed=${speed}`,
       );
     }
     return;

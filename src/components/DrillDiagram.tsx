@@ -18,6 +18,7 @@ const detailViewBoxes: Record<DiagramKey, string> = {
   hairpin: '42 20 532 454',
   'l-turn': '68 20 548 452',
   'straight-line': '0 0 320 160',
+  loop: '120 40 400 340',
 };
 const detailAspectRatios: Record<DiagramKey, number> = {
   circle: 444 / 390,
@@ -25,6 +26,7 @@ const detailAspectRatios: Record<DiagramKey, number> = {
   hairpin: 532 / 454,
   'l-turn': 548 / 452,
   'straight-line': 320 / 160,
+  loop: 400 / 340,
 };
 
 export function DrillDiagram({ type, compact, variant = 'card' }: Props) {
@@ -37,11 +39,13 @@ export function DrillDiagram({ type, compact, variant = 'card' }: Props) {
     <View style={[styles.frame, compact && styles.compact, isDetail && styles.detail, isDetail && { height: detailHeight }]}>
       <Svg width="100%" height="100%" viewBox={viewBox}>
         {!isDetail && type === 'circle' && <CircleDiagram />}
+        {!isDetail && type === 'loop' && <LoopDiagram />}
         {!isDetail && type === 'figure-eight' && <FigureEightDiagram />}
         {!isDetail && type === 'hairpin' && <HairpinDiagram />}
         {!isDetail && type === 'l-turn' && <LTurnDiagram />}
         {(type === 'straight-line') && <StraightLineDiagram />}
         {isDetail && type === 'circle' && <CircleDetailDiagram />}
+        {isDetail && type === 'loop' && <LoopDetailDiagram />}
         {isDetail && type === 'figure-eight' && <FigureEightDetailDiagram />}
         {isDetail && type === 'hairpin' && <HairpinDetailDiagram />}
         {isDetail && type === 'l-turn' && <LTurnDetailDiagram />}
@@ -111,6 +115,28 @@ function CircleDiagram() {
       <Arrow x={200} y={40} rotation={45} />
       <Arrow x={200} y={120} rotation={135} />
       <Arrow x={120} y={120} rotation={-135} />
+    </G>
+  );
+}
+
+function LoopDiagram() {
+  return (
+    <G>
+      <Path
+        d="M120 40 H200 A40 40 0 0 1 200 120 H120 A40 40 0 0 1 120 40 Z"
+        fill="none"
+        stroke={colors.charcoal}
+        strokeWidth="5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeDasharray="2 12"
+      />
+      <Cone x={160} y={120} />
+      <Arrow x={160} y={40} rotation={0} />
+      <Arrow x={240} y={80} rotation={90} />
+      <Arrow x={130} y={120} rotation={180} />
+      <Arrow x={80} y={80} rotation={-90} />
+      <CameraMarker transform="translate(160 92) rotate(180) scale(0.42)" />
     </G>
   );
 }
@@ -276,6 +302,33 @@ function CircleDetailDiagram() {
       <DimensionMeasure d="M470 272 V410 M460 272 H480 M460 410 H480" />
       <DimensionLabel x={502} y={346} rotation={-90}>6m camera</DimensionLabel>
       <CameraMarker transform="translate(320 410)" />
+    </G>
+  );
+}
+
+function LoopDetailDiagram() {
+  return (
+    <G>
+      <DiagramBounds x={140} y={60} width={370} height={340} />
+      <Path
+        d="M250 88 H390 A92 92 0 0 1 390 272 H250 A92 92 0 0 1 250 88 Z"
+        fill="none"
+        stroke={colors.charcoal}
+        strokeWidth="5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeDasharray="2 12"
+      />
+      <DetailCone x={320} y={272} />
+      <DetailArrow x={320} y={88} rotation={0} />
+      <DetailArrow x={482} y={180} rotation={90} />
+      <DetailArrow x={280} y={272} rotation={180} />
+      <DetailArrow x={158} y={180} rotation={-90} />
+      <CameraMarker transform="translate(320 210) rotate(180)" />
+      <DimensionGuide x1={390} y1={210} x2={460} y2={210} />
+      <DimensionGuide x1={390} y1={272} x2={460} y2={272} />
+      <DimensionMeasure d="M460 210 V272 M450 210 H470 M450 272 H470" />
+      <DimensionLabel x={492} y={246} rotation={-90}>~8m camera</DimensionLabel>
     </G>
   );
 }

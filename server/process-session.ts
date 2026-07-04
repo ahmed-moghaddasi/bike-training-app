@@ -5,6 +5,7 @@ import path from 'node:path';
 import { drills } from '../src/data/seed';
 import { getDetectionConfigForDrill } from '../src/lib/detection';
 import { detectLapsFromVideo } from '../src/lib/lapDetector';
+import { detectLoopLaps } from '../src/lib/loopDetector';
 import {
   DEFAULT_STRAIGHT_LINE_CONFIG,
   detectBrakingReps,
@@ -93,6 +94,59 @@ async function run(sessionId: string, drillId: string, supabaseUrl: string, serv
       if (removeError) console.warn(`Processed ok, but could not delete staged video: ${removeError.message}`);
 
       console.log(`Processed session ${sessionId}: ${reps.length} braking reps.`);
+    } else if (drill.id === 'loop') {
+      // 60fps (vs. the 30fps default) roughly doubles crossing-timestamp
+      // precision — worthwhile since a Loop pass through the zone is only ~2s.
+      const extractor = createFfmpegExtractor(60);
+      const result = await detectLoopLaps(
+        videoPath,
+        { recordingStartedAt: session.started_at ?? new Date().toISOString() },
+        extractor,
+      );
+
+      const scoredTimes = result.laps.filter((lap) => !lap.excludedFromScoring).map((lap) => lap.time);
+      const bestLap = scoredTimes.length ? Math.min(...scoredTimes) : null;
+      const averageLap = scoredTimes.length ? scoredTimes.reduce((sum, time) => sum + time, 0) / scoredTimes.length : null;
+      const spread = scoredTimes.length ? Math.max(...scoredTimes) - Math.min(...scoredTimes) : null;
+
+      if (result.laps.length > 0) {
+        const { error: lapsError } = await supabase.from('laps').insert(
+          result.laps.map((lap) => ({
+            session_id: sessionId,
+            lap_number: lap.lapNumber,
+            time: lap.time,
+            timestamp_in_video: lap.timestampInVideo ?? null,
+            entry_speed_kph: lap.entrySpeedKph ?? null,
+            speed_method: lap.speedMethod ?? null,
+          })),
+        );
+        if (lapsError) await markError(`Could not save laps: ${lapsError.message}`);
+      }
+
+      if (result.detectionEvents.length > 0) {
+        const { error: eventsError } = await supabase.from('detection_events').insert(
+          result.detectionEvents.map((event) => ({
+            session_id: sessionId,
+            event_type: event.eventType,
+            detected_at: event.detectedAt,
+            video_timestamp: event.videoTimestamp,
+            lap_number: event.lapNumber ?? null,
+            score: event.score ?? null,
+          })),
+        );
+        if (eventsError) await markError(`Could not save detection events: ${eventsError.message}`);
+      }
+
+      const { error: updateError } = await supabase
+        .from('sessions')
+        .update({ status: 'ready', lap_count: result.laps.length, best_lap: bestLap, average_lap: averageLap, spread })
+        .eq('id', sessionId);
+      if (updateError) await markError(`Could not finalize session: ${updateError.message}`);
+
+      const { error: removeError } = await supabase.storage.from('session-videos').remove([session.video_storage_path]);
+      if (removeError) console.warn(`Processed ok, but could not delete staged video: ${removeError.message}`);
+
+      console.log(`Processed session ${sessionId}: ${result.laps.length} laps.`);
     } else {
       const result = await detectLapsFromVideo(
         videoPath,
