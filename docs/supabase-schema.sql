@@ -33,6 +33,7 @@ create table if not exists public.laps (
   braking_duration_ms integer,
   speed_method text check (speed_method in ('direct', 'kinematic')),
   stop_off_screen boolean,
+  braking_score_g numeric,
   created_at timestamptz not null default now()
 );
 

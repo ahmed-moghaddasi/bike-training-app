@@ -1,4 +1,4 @@
-export type DiagramKey = 'circle' | 'figure-eight' | 'hairpin' | 'l-turn' | 'straight-line' | 'loop';
+export type DiagramKey = 'circle' | 'figure-eight' | 'straight-line' | 'loop';
 
 export type DrillGroup = 'foundations' | 'race-craft';
 
@@ -79,6 +79,8 @@ export type Lap = {
   speedMethod?: 'direct' | 'kinematic';
   /** True when the bike stopped at or past the far edge of frame; stoppingDistanceMeters is a lower bound. */
   stopOffScreen?: boolean;
+  /** Effective deceleration as a g-factor: v₀² / (2 × D × 9.81). Higher = harder braking. */
+  brakingScoreG?: number;
 };
 
 export type DetectionEvent = {

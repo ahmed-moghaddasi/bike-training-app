@@ -1,6 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Dimensions,
   Platform,
   Pressable,
   SafeAreaView,
@@ -668,7 +669,7 @@ function WebCameraTimer({
           <Text style={styles.recText}>{cameraState === 'recording' ? 'REC' : 'Aim Camera'}</Text>
           <Text style={styles.recText}>{cameraState === 'recording' ? elapsedLabel : ''}</Text>
         </View>
-        <View style={styles.cameraView}>
+        <View style={[styles.cameraView, drill.timingRule.detectionMode === 'straight-line' && styles.cameraViewWide]}>
           {React.createElement('video', {
             ref: videoRef,
             autoPlay: true,
@@ -1250,14 +1251,15 @@ function SessionDetailScreen({ sessionId, cloudSession, go }: { sessionId: strin
     const reps = session.laps;
     const stops = reps.filter((r) => !r.stopOffScreen && r.stoppingDistanceMeters != null).map((r) => r.stoppingDistanceMeters as number);
     const speeds = reps.map((r) => r.entrySpeedKph).filter((v): v is number => v != null);
+    const scores = reps.map((r) => r.brakingScoreG).filter((v): v is number => v != null);
     const bestStop = stops.length ? Math.min(...stops) : null;
     const avgSpeed = speeds.length ? speeds.reduce((s, v) => s + v, 0) / speeds.length : null;
-    const spread = stops.length ? Math.max(...stops) - Math.min(...stops) : null;
+    const bestScore = scores.length ? Math.max(...scores) : null;
     return [
       ['Best Stop', bestStop != null ? `${bestStop.toFixed(1)} m` : '--'],
       ['Avg Speed', avgSpeed != null ? `${avgSpeed.toFixed(0)} km/h` : '--'],
       ['Reps', String(reps.length)],
-      ['Spread', spread != null ? `${spread.toFixed(1)} m` : '--'],
+      ['Best Score', bestScore != null ? `${bestScore.toFixed(2)}g` : '--'],
     ];
   })();
 
@@ -1610,24 +1612,28 @@ function LapList({ laps, isStraightLine }: { laps: Lap[]; isStraightLine?: boole
   const best = scoredTimes.length ? Math.min(...scoredTimes) : undefined;
 
   if (isStraightLine) {
-    const stops = laps.map((r) => r.stoppingDistanceMeters).filter((v): v is number => v != null);
-    const bestStop = stops.length ? Math.min(...stops) : undefined;
+    const scores = laps.map((r) => r.brakingScoreG).filter((v): v is number => v != null);
+    const bestScore = scores.length ? Math.max(...scores) : undefined;
     return (
       <View style={styles.lapList}>
         {laps.map((rep) => {
-          const isBestStop = rep.stoppingDistanceMeters != null && rep.stoppingDistanceMeters === bestStop;
+          const isPB = rep.brakingScoreG != null && rep.brakingScoreG === bestScore;
           const speedStr = rep.entrySpeedKph != null
             ? `${rep.speedMethod === 'kinematic' ? '~' : ''}${rep.entrySpeedKph.toFixed(0)} km/h`
             : '--';
           const stopStr = rep.stoppingDistanceMeters != null
             ? `${rep.stopOffScreen ? '>' : ''}${rep.stoppingDistanceMeters.toFixed(1)} m`
             : '--';
+          const scoreStr = rep.brakingScoreG != null
+            ? `${rep.stopOffScreen ? '<' : ''}${rep.brakingScoreG.toFixed(2)}g`
+            : '--';
           return (
-            <View key={rep.lapNumber} style={[styles.lapRow, isBestStop && styles.lapRowBest]}>
-              <Text style={[styles.lapNum, isBestStop && styles.lapTextBest]}>R{rep.lapNumber}</Text>
-              <Text style={[styles.lapTime, isBestStop && styles.lapTextBest]}>{`↓ ${speedStr}`}</Text>
-              <Text style={[styles.lapTime, isBestStop && styles.lapTextBest]}>{`◀ ${stopStr}`}</Text>
-              {isBestStop && <Text style={styles.pbText}>PB</Text>}
+            <View key={rep.lapNumber} style={[styles.lapRow, isPB && styles.lapRowBest]}>
+              <Text style={[styles.lapNum, isPB && styles.lapTextBest]}>R{rep.lapNumber}</Text>
+              <Text style={[styles.lapTime, isPB && styles.lapTextBest]}>{`↓ ${speedStr}`}</Text>
+              <Text style={[styles.lapTime, isPB && styles.lapTextBest]}>{`◀ ${stopStr}`}</Text>
+              <Text style={[styles.lapTime, isPB && styles.lapTextBest]}>{scoreStr}</Text>
+              {isPB && <Text style={styles.pbText}>PB</Text>}
             </View>
           );
         })}
@@ -2059,6 +2065,9 @@ const styles = StyleSheet.create({
     height: 310,
     overflow: 'hidden',
     position: 'relative',
+  },
+  cameraViewWide: {
+    height: Math.round(Dimensions.get('window').height * 0.62),
   },
   timingZoneBox: {
     backgroundColor: 'rgba(230, 51, 42, 0.12)',

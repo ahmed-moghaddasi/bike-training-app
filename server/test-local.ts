@@ -67,8 +67,13 @@ async function main() {
     }
     console.log(`\nReps (${result.reps.length} detected):`);
     for (const rep of result.reps) {
+      const offScreen = rep.stopOffScreen ? ' [OFF-SCREEN]' : '';
       console.log(
-        `  Rep ${rep.repNumber}: speed=${rep.entrySpeedKph?.toFixed(1) ?? '-'} km/h  stop=${rep.stoppingDistanceMeters?.toFixed(2) ?? '-'} m  brakingDuration=${rep.brakingDurationMs ? (rep.brakingDurationMs / 1000).toFixed(2) : '-'}s  @${(rep.timestampInVideo / 1000).toFixed(1)}s`,
+        `  Rep ${rep.repNumber}: speed=${rep.entrySpeedKph?.toFixed(1) ?? '-'} km/h` +
+        `  stop=${rep.stoppingDistanceMeters?.toFixed(2) ?? '-'} m${offScreen}` +
+        `  score=${rep.brakingScoreG?.toFixed(2) ?? '-'}g` +
+        `  brakingDuration=${rep.brakingDurationMs ? (rep.brakingDurationMs / 1000).toFixed(2) : '-'}s` +
+        `  @${(rep.timestampInVideo / 1000).toFixed(1)}s`,
       );
     }
     return;

@@ -44,6 +44,7 @@ type SavedSessionRow = {
     braking_duration_ms: number | null;
     speed_method: 'direct' | 'kinematic' | null;
     stop_off_screen: boolean | null;
+    braking_score_g: number | null;
   }>;
 };
 
@@ -142,7 +143,7 @@ export async function loadSavedSessions(): Promise<SavedSession[]> {
   if (!supabase) throw new Error('Supabase is not configured.');
   const { data, error } = await supabase
     .from('sessions')
-    .select('id,date,bike_id,drill_id,setup_variant_id,video_saved,notes,status,error_message,laps(lap_number,time,timestamp_in_video,entry_speed_kph,stopping_distance_meters,braking_duration_ms,speed_method,stop_off_screen)')
+    .select('id,date,bike_id,drill_id,setup_variant_id,video_saved,notes,status,error_message,laps(lap_number,time,timestamp_in_video,entry_speed_kph,stopping_distance_meters,braking_duration_ms,speed_method,stop_off_screen,braking_score_g)')
     .order('date', { ascending: false });
 
   if (error) throw error;
@@ -169,6 +170,7 @@ export async function loadSavedSessions(): Promise<SavedSession[]> {
         brakingDurationMs: lap.braking_duration_ms === null ? undefined : lap.braking_duration_ms,
         speedMethod: lap.speed_method ?? undefined,
         stopOffScreen: lap.stop_off_screen ?? undefined,
+        brakingScoreG: lap.braking_score_g === null ? undefined : Number(lap.braking_score_g),
       })),
   }));
 }

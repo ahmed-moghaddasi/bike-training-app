@@ -85,7 +85,13 @@ export type StraightLineConfig = {
   // Camera geometry (strips → metres).
   /** Camera distance from the riding line in metres. */
   cameraDistanceMeters: number;
-  /** Estimated horizontal field of view in degrees. 108° = iPhone ultra-wide (0.5×). */
+  /**
+   * Estimated horizontal field of view in degrees. Calibrated to 104° from the
+   * loop drill footage (wheelbase measurement across three crossings confirmed the
+   * same lens is used here — iPhone ultra-wide 0.5× has a true HFOV ~104°, not
+   * the 108° that nominal spec sheets suggest). Only used as a fallback when
+   * frameWidthMetersOverride is not set.
+   */
   estimatedHFOVDegrees: number;
   /**
    * Directly calibrated frame width (metres) at the riding line — takes priority
@@ -125,7 +131,7 @@ export const DEFAULT_STRAIGHT_LINE_CONFIG: StraightLineConfig = {
   endVelocityWindowFrames: 10,
   minEntrySpeedKph: 10,
   cameraDistanceMeters: 15,
-  estimatedHFOVDegrees: 108,
+  estimatedHFOVDegrees: 104,
   offScreenFraction: 0.99,
 };
 
@@ -714,8 +720,6 @@ function analyseBrakingRun(
     speedMethod = 'kinematic';
   }
 
-  const brakingDurationMs = Math.max(0, times[stopFrameIdx] - brakeTimeMs);
-
   // Flag only when the centroid reached the very edge of frame (≥99%), meaning
   // the bike genuinely exited. Stops at 95–98% are physically inside the frame.
   const stopOffScreen =
@@ -724,6 +728,14 @@ function analyseBrakingRun(
       : stopStrip <= config.numStrips * (1 - config.offScreenFraction);
 
   const v0Mps = (entrySpeedKph ?? 0) / 3.6;
+  // Physics formula rather than direct time diff: times[stopFrameIdx] captures dwell
+  // time because the minimum-velocity frame can land anywhere inside the stationary
+  // period after braking ends. 2D/v₀ gives the actual deceleration interval and is
+  // consistent with the constant-deceleration assumption used by brakingScoreG.
+  const brakingDurationMs =
+    v0Mps > 0 && stoppingDistanceMeters > 0
+      ? (2 * stoppingDistanceMeters / v0Mps) * 1000
+      : Math.max(0, times[stopFrameIdx] - brakeTimeMs);
   const brakingScoreG =
     entrySpeedKph !== null && stoppingDistanceMeters > 0
       ? (v0Mps * v0Mps) / (2 * stoppingDistanceMeters * 9.81)

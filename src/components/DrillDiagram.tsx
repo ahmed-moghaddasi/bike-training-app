@@ -15,16 +15,12 @@ const coneOrange = '#FF7A00';
 const detailViewBoxes: Record<DiagramKey, string> = {
   circle: '92 54 444 390',
   'figure-eight': '36 72 528 284',
-  hairpin: '42 20 532 454',
-  'l-turn': '68 20 548 452',
   'straight-line': '0 0 320 160',
   loop: '120 40 400 340',
 };
 const detailAspectRatios: Record<DiagramKey, number> = {
   circle: 444 / 390,
   'figure-eight': 528 / 284,
-  hairpin: 532 / 454,
-  'l-turn': 548 / 452,
   'straight-line': 320 / 160,
   loop: 400 / 340,
 };
@@ -41,14 +37,10 @@ export function DrillDiagram({ type, compact, variant = 'card' }: Props) {
         {!isDetail && type === 'circle' && <CircleDiagram />}
         {!isDetail && type === 'loop' && <LoopDiagram />}
         {!isDetail && type === 'figure-eight' && <FigureEightDiagram />}
-        {!isDetail && type === 'hairpin' && <HairpinDiagram />}
-        {!isDetail && type === 'l-turn' && <LTurnDiagram />}
         {(type === 'straight-line') && <StraightLineDiagram />}
         {isDetail && type === 'circle' && <CircleDetailDiagram />}
         {isDetail && type === 'loop' && <LoopDetailDiagram />}
         {isDetail && type === 'figure-eight' && <FigureEightDetailDiagram />}
-        {isDetail && type === 'hairpin' && <HairpinDetailDiagram />}
-        {isDetail && type === 'l-turn' && <LTurnDetailDiagram />}
       </Svg>
     </View>
   );
@@ -158,50 +150,6 @@ function FigureEightDiagram() {
       <Arrow x={176} y={40} rotation={135} />
       <Arrow x={256} y={40} rotation={-135} />
       <Arrow x={176} y={120} rotation={45} />
-    </G>
-  );
-}
-
-function HairpinDiagram() {
-  return (
-    <G>
-      <TrackSurface d="M34 29 H171 A60 60 0 0 1 171 149 H52 V121 H171 A32 32 0 0 0 171 57 H34 Z" />
-      <RiderPath d="M34 36 C124 36 191 34 203 84 C214 130 148 139 52 139" />
-      <Cone x={79} y={29} />
-      <Cone x={171} y={29} />
-      <Cone x={231} y={89} />
-      <Cone x={171} y={149} />
-      <Cone x={79} y={149} />
-      <Cone x={79} y={57} />
-      <Cone x={171} y={57} />
-      <Cone x={203} y={89} />
-      <Cone x={171} y={121} />
-      <Cone x={79} y={121} />
-      <Arrow x={104} y={36} rotation={0} />
-      <Arrow x={202} y={103} rotation={112} />
-      <Arrow x={102} y={139} rotation={180} />
-    </G>
-  );
-}
-
-function LTurnDiagram() {
-  return (
-    <G>
-      <TrackSurface d="M70 150 V88 A70 70 0 0 1 140 18 H288 V46 H140 A42 42 0 0 0 98 88 V150 Z" />
-      <RiderPath d="M76 150 C76 110 76 94 86 88 C98 60 114 45 128 39 C170 24 224 22 288 25" />
-      <Cone x={70} y={136} />
-      <Cone x={98} y={136} />
-      <Cone x={70} y={88} />
-      <Cone x={98} y={88} />
-      <Cone x={91} y={39} />
-      <Cone x={110} y={58} />
-      <Cone x={140} y={18} />
-      <Cone x={140} y={46} />
-      <Cone x={260} y={18} />
-      <Cone x={260} y={46} />
-      <Arrow x={76} y={116} rotation={-90} />
-      <Arrow x={112} y={50} rotation={-38} />
-      <Arrow x={222} y={24} rotation={0} />
     </G>
   );
 }
@@ -350,88 +298,6 @@ function FigureEightDetailDiagram() {
       <DimensionMeasure d="M360 184 V324 M350 184 H370 M350 324 H370" />
       <DimensionLabel x={394} y={258} rotation={-90}>5m camera</DimensionLabel>
       <CameraMarker transform="translate(292 324)" />
-    </G>
-  );
-}
-
-function HairpinDetailDiagram() {
-  const cones = [[160, 86], [344, 86], [464, 206], [344, 326], [160, 326], [160, 142], [344, 142], [408, 206], [344, 270], [160, 270]];
-  return (
-    <G>
-      <Path d="M70 86 H344 A120 120 0 0 1 344 326 H106 V270 H344 A64 64 0 0 0 344 142 H70 Z" fill={colors.silverMid} fillOpacity="0.48" stroke={colors.charcoal} strokeOpacity="0.2" strokeWidth="1.5" />
-      <Path d="M70 100 C250 100 384 96 408 196 C430 288 298 306 106 306" fill="none" stroke={colors.charcoal} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="2 12" />
-      {cones.map(([x, y]) => <DetailCone key={`${x}-${y}`} x={x} y={y} />)}
-      <DetailArrow x={210} y={100} rotation={0} />
-      <DetailArrow x={406} y={234} rotation={112} />
-      <DetailArrow x={206} y={306} rotation={180} />
-      <DimensionGuide x1={160} y1={142} x2={160} y2={50} />
-      <DimensionGuide x1={344} y1={142} x2={344} y2={50} />
-      <DimensionMeasure d="M160 50 H344 M160 40 V60 M344 40 V60" />
-      <DimensionLabel x={252} y={34}>12m brake</DimensionLabel>
-      <DimensionGuide x1={160} y1={86} x2={82} y2={86} />
-      <DimensionGuide x1={160} y1={142} x2={82} y2={142} />
-      <DimensionMeasure d="M82 86 V142 M72 86 H92 M72 142 H92" />
-      <DimensionLabel x={62} y={118} rotation={-90}>3m entry lane</DimensionLabel>
-      <DimensionLabel x={160} y={166}>start</DimensionLabel>
-      <DimensionGuide x1={344} y1={142} x2={344} y2={246} />
-      <DimensionGuide x1={408} y1={206} x2={408} y2={246} />
-      <DimensionMeasure d="M344 246 H408 M344 236 V256 M408 236 V256" />
-      <DimensionLabel x={320} y={251} textAnchor="end">4m horizontal</DimensionLabel>
-      <DimensionGuide x1={344} y1={142} x2={520} y2={142} />
-      <DimensionGuide x1={408} y1={206} x2={520} y2={206} />
-      <DimensionMeasure d="M520 142 V206 M510 142 H530 M510 206 H530" />
-      <DimensionLabel x={548} y={179} rotation={-90}>4m vertical</DimensionLabel>
-      <DimensionGuide x1={160} y1={270} x2={82} y2={270} />
-      <DimensionGuide x1={160} y1={326} x2={82} y2={326} />
-      <DimensionMeasure d="M82 270 V326 M72 270 H92 M72 326 H92" />
-      <DimensionLabel x={62} y={298} rotation={-90}>3m exit lane</DimensionLabel>
-      <DimensionGuide x1={344} y1={326} x2={344} y2={362} />
-      <DimensionGuide x1={160} y1={326} x2={160} y2={362} />
-      <DimensionMeasure d="M160 362 H344 M160 352 V372 M344 352 V372" />
-      <DimensionLabel x={252} y={386}>12m exit</DimensionLabel>
-      <DimensionGuide x1={160} y1={326} x2={126} y2={326} />
-      <DimensionGuide x1={160} y1={458} x2={126} y2={458} />
-      <DimensionMeasure d="M126 326 V458 M116 326 H136 M116 458 H136" />
-      <DimensionLabel x={106} y={392} rotation={-90}>6m camera</DimensionLabel>
-      <CameraMarker transform="translate(160 458)" />
-    </G>
-  );
-}
-
-function LTurnDetailDiagram() {
-  const cones = [[140, 380], [196, 380], [140, 176], [196, 176], [181, 77], [221, 117], [280, 36], [280, 92], [500, 36], [500, 92]];
-  return (
-    <G>
-      <Path d="M140 420 V176 A140 140 0 0 1 280 36 H548 V92 H280 A84 84 0 0 0 196 176 V420 Z" fill={colors.silverMid} fillOpacity="0.48" stroke={colors.charcoal} strokeOpacity="0.2" strokeWidth="1.5" />
-      <Path d="M152 420 C152 300 152 212 172 176 C196 120 228 90 256 78 C340 48 448 44 548 50" fill="none" stroke={colors.charcoal} strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="2 12" />
-      {cones.map(([x, y]) => <DetailCone key={`${x}-${y}`} x={x} y={y} />)}
-      <DetailArrow x={152} y={300} rotation={-90} />
-      <DetailArrow x={224} y={96} rotation={-38} />
-      <DetailArrow x={420} y={49} rotation={0} />
-      <DimensionGuide x1={140} y1={380} x2={140} y2={432} />
-      <DimensionGuide x1={196} y1={380} x2={196} y2={432} />
-      <DimensionMeasure d="M140 432 H196 M140 422 V442 M196 422 V442" />
-      <DimensionLabel x={168} y={456}>3m start gate</DimensionLabel>
-      <DimensionGuide x1={140} y1={380} x2={104} y2={380} />
-      <DimensionGuide x1={140} y1={176} x2={104} y2={176} />
-      <DimensionMeasure d="M104 176 V380 M94 176 H114 M94 380 H114" />
-      <DimensionLabel x={84} y={278} rotation={-90}>12m approach</DimensionLabel>
-      <DimensionGuide x1={500} y1={36} x2={570} y2={36} />
-      <DimensionGuide x1={500} y1={92} x2={570} y2={92} />
-      <DimensionMeasure d="M570 36 V92 M560 36 H580 M560 92 H580" />
-      <DimensionLabel x={596} y={64} rotation={-90}>3m exit gate</DimensionLabel>
-      <DimensionGuide x1={280} y1={92} x2={280} y2={124} />
-      <DimensionGuide x1={500} y1={92} x2={500} y2={124} />
-      <DimensionMeasure d="M280 124 H500 M280 114 V134 M500 114 V134" />
-      <DimensionLabel x={390} y={148}>12m exit</DimensionLabel>
-      <DimensionGuide x1={140} y1={176} x2={140} y2={154} />
-      <DimensionGuide x1={280} y1={176} x2={280} y2={154} />
-      <DimensionMeasure d="M140 154 H280 M140 144 V164 M280 144 V164" />
-      <DimensionLabel x={128} y={150} textAnchor="end">7.5m radius</DimensionLabel>
-      <DimensionGuide x1={140} y1={380} x2={500} y2={380} />
-      <DimensionGuide x1={500} y1={92} x2={500} y2={380} />
-      <DimensionLabel x={320} y={370}>19.5m camera line</DimensionLabel>
-      <CameraMarker transform="translate(500 380) rotate(-45)" />
     </G>
   );
 }

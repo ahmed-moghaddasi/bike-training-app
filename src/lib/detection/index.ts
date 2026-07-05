@@ -1,16 +1,12 @@
 import { DEFAULT_DETECTION_CONFIG, type DetectionConfig } from './types';
 import { circleDetectionConfig } from './drills/circle';
 import { figureEightDetectionConfig } from './drills/figure-eight';
-import { hairpinDetectionConfig } from './drills/hairpin';
-import { lTurnDetectionConfig } from './drills/l-turn';
 import { loopDetectionConfig } from './drills/loop';
 import { straightLineDetectionConfig } from './drills/straight-line';
 
 const overridesByDrillId: Record<string, Partial<DetectionConfig>> = {
   circle: circleDetectionConfig,
   'figure-eight': figureEightDetectionConfig,
-  hairpin: hairpinDetectionConfig,
-  'l-turn': lTurnDetectionConfig,
   loop: loopDetectionConfig,
   'straight-line': straightLineDetectionConfig,
 };
