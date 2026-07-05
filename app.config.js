@@ -62,6 +62,7 @@ const config = {
   },
   plugins: [
     withVisionCameraPermission,
+    "expo-video",
     [
       "expo-build-properties",
       {

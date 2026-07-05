@@ -41,6 +41,7 @@ import {
 } from './src/lib/recording';
 import { shareOrDownloadVideo } from './src/lib/localVideo';
 import * as MediaLibrary from 'expo-media-library';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import {
   attachSessionNotes,
   attachVideoStoragePath,
@@ -91,7 +92,7 @@ const routeTitles: Record<Route['name'], string> = {
 
 
 function isDebugReprocessMode() {
-  return typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === 'reprocess';
+  return typeof window !== 'undefined' && window.location != null && new URLSearchParams(window.location.search).get('debug') === 'reprocess';
 }
 
 function createJobId() {
@@ -777,6 +778,80 @@ function LapFlashOverlay({ videoRef, events }: { videoRef: React.RefObject<HTMLV
   );
 }
 
+function NativeVideoPreview({ uri, drillName, durationSeconds }: { uri: string; drillName: string; durationSeconds?: number }) {
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = true;
+    p.play();
+  });
+  const mins = durationSeconds != null ? Math.floor(durationSeconds / 60) : null;
+  const secs = durationSeconds != null ? Math.round(durationSeconds % 60) : null;
+  const durationLabel = mins != null && secs != null
+    ? mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
+    : null;
+
+  return (
+    <View style={nativeVideoStyles.container}>
+      <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="contain" />
+      {/* Overlay: drill name + duration top-left, processing status bottom */}
+      <View style={nativeVideoStyles.topBar} pointerEvents="none">
+        <Text style={nativeVideoStyles.drillLabel}>{drillName}</Text>
+        {durationLabel && <Text style={nativeVideoStyles.durationLabel}>{durationLabel}</Text>}
+      </View>
+      <View style={nativeVideoStyles.bottomBar} pointerEvents="none">
+        <Text style={nativeVideoStyles.processingLabel}>Processing laps on server...</Text>
+      </View>
+    </View>
+  );
+}
+
+const nativeVideoStyles = StyleSheet.create({
+  container: {
+    width: '100%',
+    aspectRatio: 9 / 16,
+    backgroundColor: colors.black,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+  },
+  topBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  drillLabel: {
+    color: colors.white,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  durationLabel: {
+    color: 'rgba(255,255,255,0.7)',
+    fontFamily: fonts.mono,
+    fontSize: 12,
+  },
+  bottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+  },
+  processingLabel: {
+    color: 'rgba(255,255,255,0.6)',
+    fontFamily: fonts.body,
+    fontSize: 12,
+  },
+});
+
 function SessionSummaryScreen({
   drillId,
   currentBike,
@@ -933,10 +1008,16 @@ function SessionSummaryScreen({
               width: '100%',
             },
           })
+        ) : draft?.videoUri ? (
+          <NativeVideoPreview
+            uri={draft.videoUri}
+            drillName={drill.name}
+            durationSeconds={draft.videoDurationSeconds}
+          />
         ) : (
-          <Text style={styles.bodyText}>{draft ? 'Video was not recorded for this run.' : 'Saved · placeholder recording attached to this mock session.'}</Text>
+          <Text style={styles.bodyText}>{'Saved · placeholder recording attached to this mock session.'}</Text>
         )}
-        {draft?.videoUri && (
+        {draft?.videoUri && Platform.OS === 'web' && (
           <>
             <View style={styles.videoSaveRow}>
               <View style={styles.videoSaveCopy}>
@@ -954,9 +1035,12 @@ function SessionSummaryScreen({
             {localVideoMessage && (
               <Text style={[styles.saveMessage, localVideoStatus === 'error' && styles.saveMessageError]}>{localVideoMessage}</Text>
             )}
-            {draft.recordingStopReason === 'maxDuration' && <Text style={styles.cameraTip}>Recording stopped at the 8-minute limit.</Text>}
           </>
         )}
+        {draft?.videoUri && Platform.OS !== 'web' && (
+          <Text style={styles.bodyText}>Auto-saved to the "Bike Training" album in your camera roll.</Text>
+        )}
+        {draft?.recordingStopReason === 'maxDuration' && <Text style={styles.cameraTip}>Recording stopped at the 8-minute limit.</Text>}
       </Section>
 
       <Section label="Notes">
@@ -1018,7 +1102,7 @@ function DebugReprocessScreen() {
   // Lets a headless/automated run load a video by URL instead of through the
   // file picker, e.g. ?debug=reprocess&videoUrl=http://localhost:PORT/clip.mp4&drill=circle&autorun=1
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || window.location == null) return;
     const params = new URLSearchParams(window.location.search);
     const videoUrlParam = params.get('videoUrl');
     const drillParam = params.get('drill');

@@ -1,3 +1,4 @@
+import * as MediaLibrary from 'expo-media-library';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import {
@@ -23,9 +24,26 @@ export type NativeCameraTimerProps = {
   onCancel: () => void;
 };
 
+async function saveToAlbum(filePath: string) {
+  try {
+    const { status } = await MediaLibrary.requestPermissionsAsync();
+    if (status !== 'granted') return;
+    const asset = await MediaLibrary.createAssetAsync(`file://${filePath}`);
+    const album = await MediaLibrary.getAlbumAsync('Bike Training');
+    if (album == null) {
+      await MediaLibrary.createAlbumAsync('Bike Training', asset, false);
+    } else {
+      await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+    }
+  } catch (e) {
+    console.warn('[NativeCameraTimer] auto-save failed', e);
+  }
+}
+
 export function NativeCameraTimer({ drill, setup, currentBike, onSessionComplete, onCancel }: NativeCameraTimerProps) {
   const { hasPermission, requestPermission } = useCameraPermission();
   const isStraightLine = drill.timingRule.detectionMode === 'straight-line';
+  const isWideAngle = isStraightLine || drill.id === 'loop';
 
   // Prefer ultra-wide for the wider FOV the detectors are calibrated against.
   const device = useCameraDevice('back', {
@@ -38,6 +56,10 @@ export function NativeCameraTimer({ drill, setup, currentBike, onSessionComplete
     enableAudio: false,
     fileType: 'mp4',
   });
+
+  // Wide drills (straight-line, loop) use the device's minimum zoom for maximum
+  // field of view. Circle and figure-eight use the natural 1x zoom.
+  const targetZoom = isWideAngle ? (device?.minZoom ?? 1) : 1;
 
   const recorderRef = useRef<Recorder | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -65,7 +87,7 @@ export function NativeCameraTimer({ drill, setup, currentBike, onSessionComplete
     try {
       await recorderRef.current?.stopRecording();
     } catch {
-      // already stopped or not started
+      // already stopped
     }
     recorderRef.current = null;
   }, []);
@@ -89,6 +111,9 @@ export function NativeCameraTimer({ drill, setup, currentBike, onSessionComplete
 
       await recorder.startRecording(
         (filePath) => {
+          // Auto-save to camera roll in the background — don't block the summary.
+          void saveToAlbum(filePath);
+
           const draft: SessionDraft = {
             drillId: drill.id,
             setupVariantId: setup.id,
@@ -161,6 +186,7 @@ export function NativeCameraTimer({ drill, setup, currentBike, onSessionComplete
         device={device}
         outputs={[videoOutput]}
         constraints={[{ fps: 60 }]}
+        zoom={targetZoom}
         isActive={true}
       />
 
