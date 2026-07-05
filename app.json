@@ -43,6 +43,31 @@
       "startUrl": ".",
       "orientation": "portrait",
       "description": "Plan cone drills, time sessions, and track riding progress from phone or browser."
-    }
+    },
+    "plugins": [
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "$(PRODUCT_NAME) needs camera access to record your training sessions.",
+          "enableMicrophonePermission": false
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "15.4"
+          }
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to save training videos to your camera roll.",
+          "savePhotosPermission": "Allow $(PRODUCT_NAME) to save training videos to your camera roll.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ]
+    ]
   }
 }

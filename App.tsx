@@ -15,6 +15,7 @@ import {
 import { DrillDiagram } from './src/components/DrillDiagram';
 import { LineChart } from './src/components/LineChart';
 import { HomeScreenV2 } from './src/screens/HomeScreenV2';
+import { NativeCameraTimer } from './src/screens/NativeCameraTimer';
 import { bikes, drills, sessions } from './src/data/seed';
 import {
   averageLap,
@@ -39,6 +40,7 @@ import {
   MAX_RECORDING_DURATION_MS,
 } from './src/lib/recording';
 import { shareOrDownloadVideo } from './src/lib/localVideo';
+import * as MediaLibrary from 'expo-media-library';
 import {
   attachSessionNotes,
   attachVideoStoragePath,
@@ -430,15 +432,13 @@ function CameraScreen({ drillId, currentBike, go }: { drillId: string; currentBi
 
   if (Platform.OS !== 'web') {
     return (
-      <Page title="Camera Timer" subtitle={`${drill.name} · ${setup.name}`}>
-        <View style={styles.cameraShell}>
-          <View style={styles.cameraView}>
-            <Text style={styles.cameraOverlay}>Web Only V1</Text>
-          </View>
-          <Text style={styles.cameraTip}>Camera timer v1 is built for iPhone Safari. Open the HTTPS web URL on your phone to test recording and lap detection.</Text>
-        </View>
-        <PrimaryButton label="Back To Drill" onPress={() => go({ name: 'drill', drillId })} />
-      </Page>
+      <NativeCameraTimer
+        drill={drill}
+        setup={setup}
+        currentBike={currentBike}
+        onSessionComplete={(draft) => go({ name: 'summary', drillId, draft, returnTo: { name: 'drill', drillId } })}
+        onCancel={() => go({ name: 'drill', drillId })}
+      />
     );
   }
 
@@ -825,6 +825,18 @@ function SessionSummaryScreen({
     try {
       setLocalVideoStatus('saving');
       setLocalVideoMessage(null);
+      if (Platform.OS !== 'web') {
+        const { status } = await MediaLibrary.requestPermissionsAsync();
+        if (status !== 'granted') {
+          setLocalVideoStatus('error');
+          setLocalVideoMessage('Camera roll permission is required to save the video.');
+          return;
+        }
+        await MediaLibrary.saveToLibraryAsync(draft.videoUri);
+        setLocalVideoStatus('saved');
+        setLocalVideoMessage('Video saved to your camera roll.');
+        return;
+      }
       const response = await fetch(draft.videoUri);
       const blob = await response.blob();
       const extension = blob.type.includes('webm') ? 'webm' : 'mp4';
