@@ -15,6 +15,11 @@ function withVisionCameraPermission(config) {
 
 /** @type {import('@expo/config').ExpoConfig} */
 const config = {
+  extra: {
+    eas: {
+      projectId: "73fd018c-bf98-4632-9502-47370df94942",
+    },
+  },
   name: "Bike Training",
   slug: "bike-training-app",
   description: "A mobile-first motorcycle drill tracker for cone setups, session timing, and practice progress.",
