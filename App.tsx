@@ -37,7 +37,11 @@ import {
   MAX_RECORDING_DURATION_MS,
 } from './src/lib/recording';
 import { shareOrDownloadVideo } from './src/lib/localVideo';
-import * as MediaLibrary from 'expo-media-library';
+// The default `expo-media-library` entry now points at a "Next" class-based API whose native
+// module lookup runs eagerly at import time with no web shim — it throws immediately on web,
+// before React ever renders, producing a blank page with no console error. `/legacy` has a
+// proper `.web.js` stub for this exact cross-platform case.
+import * as MediaLibrary from 'expo-media-library/legacy';
 import { NativeVideoPreview } from './src/components/NativeVideoPreview';
 import {
   attachSessionNotes,
