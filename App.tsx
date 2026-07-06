@@ -1,5 +1,8 @@
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useFonts, TitilliumWeb_700Bold } from '@expo-google-fonts/titillium-web';
+import { ShareTechMono_400Regular } from '@expo-google-fonts/share-tech-mono';
+import * as SplashScreen from 'expo-splash-screen';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Dimensions,
   Platform,
@@ -12,22 +15,16 @@ import {
   View,
   type ViewStyle,
 } from 'react-native';
-import { DrillDiagram } from './src/components/DrillDiagram';
 import { LineChart } from './src/components/LineChart';
 import { HomeScreenV2 } from './src/screens/HomeScreenV2';
 import { NativeCameraTimer } from './src/screens/NativeCameraTimer';
-import { bikes, drills, sessions } from './src/data/seed';
-import {
-  averageLap,
-  bestLap,
-  contextKey,
-  formatDate,
-  formatLap,
-  getSetupName,
-  lapSpread,
-  latestSession,
-  sessionsForContext,
-} from './src/lib/metrics';
+import { DrillsScreen } from './src/screens/DrillsScreen';
+import { DrillDetailScreen } from './src/screens/DrillDetailScreen';
+import { SessionDetailScreen } from './src/screens/SessionDetailScreen';
+import { SessionLogScreen } from './src/screens/SessionLogScreen';
+import { ProgressionScreen, DrillProgressScreen } from './src/screens/ProgressionScreen';
+import { bikes, drills } from './src/data/seed';
+import { formatLap } from './src/lib/metrics';
 import { detectLapsFromVideo, type LapDetectionDiagnostics } from './src/lib/lapDetector';
 import { detectLoopLaps } from './src/lib/loopDetector';
 import { DEFAULT_STRAIGHT_LINE_CONFIG } from './src/lib/straightLineDetector';
@@ -41,7 +38,7 @@ import {
 } from './src/lib/recording';
 import { shareOrDownloadVideo } from './src/lib/localVideo';
 import * as MediaLibrary from 'expo-media-library';
-import { useVideoPlayer, VideoView } from 'expo-video';
+import { NativeVideoPreview } from './src/components/NativeVideoPreview';
 import {
   attachSessionNotes,
   attachVideoStoragePath,
@@ -55,28 +52,8 @@ import {
   uploadDebugReport,
   uploadSessionVideo,
 } from './src/lib/supabase';
-import { colors, fonts, radius, spacing } from './src/theme';
-import type { Bike, DetectionEvent, Drill, DrillGroup, Lap, ProcessingJob, ProgressContext, Session, SessionDraft, SetupVariant } from './src/types';
-
-type ReturnRoute =
-  | { name: 'home' }
-  | { name: 'drills' }
-  | { name: 'drill'; drillId: string }
-  | { name: 'sessions' }
-  | { name: 'session'; sessionId: string; session?: Session }
-  | { name: 'progress' }
-  | { name: 'drillProgress'; context: ProgressContext };
-
-type Route =
-  | { name: 'home' }
-  | { name: 'drills' }
-  | { name: 'drill'; drillId: string; returnTo?: ReturnRoute }
-  | { name: 'camera'; drillId: string; returnTo?: ReturnRoute }
-  | { name: 'summary'; drillId: string; draft?: SessionDraft; returnTo?: ReturnRoute }
-  | { name: 'sessions' }
-  | { name: 'session'; sessionId: string; session?: Session; returnTo?: ReturnRoute }
-  | { name: 'progress' }
-  | { name: 'drillProgress'; context: ProgressContext; returnTo?: ReturnRoute };
+import { colors, fonts, radius, shadows, spacing, tracking } from './src/theme';
+import type { Bike, DetectionEvent, Drill, Lap, ProcessingJob, Route, Session, SessionDraft, SetupVariant } from './src/types';
 
 const routeTitles: Record<Route['name'], string> = {
   home: 'Apex Lab',
@@ -91,6 +68,8 @@ const routeTitles: Record<Route['name'], string> = {
 };
 
 
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
 function isDebugReprocessMode() {
   return typeof window !== 'undefined' && window.location != null && new URLSearchParams(window.location.search).get('debug') === 'reprocess';
 }
@@ -101,6 +80,7 @@ function createJobId() {
 }
 
 export default function App() {
+  const [fontsLoaded] = useFonts({ TitilliumWeb_700Bold, ShareTechMono_400Regular });
   const [route, setRoute] = useState<Route>({ name: 'home' });
   const [currentBikeId] = useState(bikes.find((bike) => bike.isCurrent)?.id ?? bikes[0].id);
   const currentBike = bikes.find((bike) => bike.id === currentBikeId) ?? bikes[0];
@@ -158,6 +138,14 @@ export default function App() {
     setRoute(parentRoute(route));
   }
 
+  useEffect(() => {
+    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
+  }, [fontsLoaded]);
+
+  if (!fontsLoaded) {
+    return null;
+  }
+
   if (isDebugReprocessMode()) {
     return (
       <SafeAreaView style={styles.screen}>
@@ -167,10 +155,12 @@ export default function App() {
     );
   }
 
+  const isLegacyScreen = route.name === 'camera' || route.name === 'summary';
+
   return (
-    <SafeAreaView style={styles.screen}>
-      <StatusBar style="dark" />
-      {route.name !== 'home' && (
+    <SafeAreaView style={[styles.screen, !isLegacyScreen && styles.screenDark]}>
+      <StatusBar style={isLegacyScreen ? 'dark' : 'light'} />
+      {isLegacyScreen && (
         <View style={styles.topBar}>
           <Pressable onPress={back} style={styles.backButton}>
             <Text style={styles.backText}>←</Text>
@@ -187,10 +177,11 @@ export default function App() {
           onOpenSession={(session) => go({ name: 'session', sessionId: session.id, session, returnTo: { name: 'home' } })}
           onOpenSessions={() => go({ name: 'sessions' })}
           onOpenProgress={() => go({ name: 'progress' })}
+          go={go}
         />
       )}
       {route.name === 'drills' && <DrillsScreen currentBikeId={currentBikeId} go={go} />}
-      {route.name === 'drill' && <DrillDetailScreen drillId={route.drillId} go={go} />}
+      {route.name === 'drill' && <DrillDetailScreen drillId={route.drillId} currentBikeId={currentBikeId} onBack={back} go={go} />}
       {route.name === 'camera' && <CameraScreen drillId={route.drillId} currentBike={currentBike} go={go} />}
       {route.name === 'summary' && (
         <SessionSummaryScreen
@@ -203,10 +194,14 @@ export default function App() {
           go={go}
         />
       )}
-      {route.name === 'sessions' && <SessionsScreen go={go} />}
-      {route.name === 'session' && <SessionDetailScreen sessionId={route.sessionId} cloudSession={route.session} go={go} />}
-      {route.name === 'progress' && <ProgressScreen currentBikeId={currentBikeId} go={go} />}
-      {route.name === 'drillProgress' && <DrillProgressScreen context={route.context} go={go} />}
+      {route.name === 'sessions' && <SessionLogScreen currentBikeId={currentBikeId} go={go} />}
+      {route.name === 'session' && (
+        <SessionDetailScreen sessionId={route.sessionId} cloudSession={route.session} currentBikeId={currentBikeId} onBack={back} go={go} />
+      )}
+      {route.name === 'progress' && <ProgressionScreen currentBikeId={currentBikeId} go={go} />}
+      {route.name === 'drillProgress' && (
+        <DrillProgressScreen context={route.context} currentBikeId={currentBikeId} onBack={back} go={go} />
+      )}
 
       {jobs.map((job) => (
         <JobRunner key={job.id} job={job} onUpdate={updateJob} onToast={showToast} />
@@ -320,111 +315,6 @@ function parentRoute(route: Route): Route {
     default:
       return { name: 'home' };
   }
-}
-
-
-
-const DRILL_GROUP_ORDER: { key: DrillGroup; label: string }[] = [
-  { key: 'foundations', label: 'Foundations' },
-  { key: 'race-craft', label: 'Race Craft' },
-];
-
-function DrillsScreen({ currentBikeId, go }: { currentBikeId: string; go: (route: Route) => void }) {
-  const readyDrills = drills.filter((drill) => drill.isReady);
-
-  return (
-    <Page title="Drills" subtitle="Choose the setup you want to practice.">
-      {DRILL_GROUP_ORDER.map(({ key, label }) => {
-        const groupDrills = readyDrills.filter((drill) => drill.group === key);
-        if (groupDrills.length === 0) {
-          return null;
-        }
-        return (
-          <Section key={key} label={label}>
-            <View style={styles.drillGrid}>
-              {groupDrills.map((drill) => {
-                const setup = drill.setupVariants.find((variant) => variant.id === drill.defaultSetupVariantId);
-                const contextSessions = sessionsForContext(sessions, {
-                  bikeId: currentBikeId,
-                  drillId: drill.id,
-                  setupVariantId: drill.defaultSetupVariantId,
-                });
-                const latest = latestSession(contextSessions);
-                const best = contextSessions.length ? Math.min(...contextSessions.map(bestLap)) : undefined;
-                const isStraightLineDrill = drill.timingRule.detectionMode === 'straight-line';
-                const bestStopM = isStraightLineDrill
-                  ? contextSessions.flatMap((s) => s.laps.map((l) => l.stoppingDistanceMeters).filter((v): v is number => v != null)).reduce((min, v) => Math.min(min, v), Infinity)
-                  : undefined;
-                return (
-                  <Pressable key={drill.id} style={styles.drillLibraryCard} onPress={() => go({ name: 'drill', drillId: drill.id, returnTo: { name: 'drills' } })}>
-                    <Text style={styles.drillCardTitle}>{drill.name}</Text>
-                    <DrillDiagram type={drill.diagramKey} compact />
-                    <View style={styles.cardBottomRow}>
-                      {isStraightLineDrill
-                        ? <Text style={styles.metricText}>Best stop: {Number.isFinite(bestStopM) ? `${bestStopM!.toFixed(1)} m` : '--'}</Text>
-                        : <Text style={styles.metricText}>Best: {formatLap(best)}s</Text>}
-                      <Text style={styles.metricText}>Last: {latest ? formatDate(latest.date, true) : 'Not yet'}</Text>
-                    </View>
-                    <Text style={styles.cardSub}>{setup?.name}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </Section>
-        );
-      })}
-    </Page>
-  );
-}
-
-function DrillDetailScreen({ drillId, go }: { drillId: string; go: (route: Route) => void }) {
-  const drill = drills.find((item) => item.id === drillId) ?? drills[0];
-  const setup = drill.setupVariants.find((variant) => variant.id === drill.defaultSetupVariantId) ?? drill.setupVariants[0];
-
-  return (
-    <Page title={drill.name} subtitle={drill.shortDescription}>
-      <View style={styles.contextPill}>
-        <Text style={styles.contextPillText}>{setup.name}</Text>
-      </View>
-
-      <Section label="What This Trains">
-        <Text style={styles.bodyText}>{drill.whyItMatters}</Text>
-        <BulletList items={drill.whatThisTrains} />
-      </Section>
-
-      <Section label="Setup">
-        <View style={styles.drillSetupDiagram}>
-          <DrillDiagram type={drill.diagramKey} variant="detail" />
-        </View>
-      </Section>
-
-      <Section label="How To Ride It">
-        <NumberedList items={drill.howToRideSteps} />
-      </Section>
-
-      <Section label="Coach Notes">
-        <BulletList items={drill.coachingCues} accent />
-      </Section>
-
-      <Section label="Common Mistakes">
-        <BulletList items={drill.commonMistakes} />
-      </Section>
-
-      <Section label="Progression">
-        {drill.progressions.map((progression) => (
-          <View key={progression.title} style={styles.progressionBlock}>
-            <Text style={styles.progressionTitle}>{progression.title}</Text>
-            <Text style={styles.bodyText}>{progression.description}</Text>
-            <Text style={styles.smallLabel}>
-              {progression.comparisonType === 'newSetupVariant' ? 'New setup variant' : 'Same timing context'}
-            </Text>
-          </View>
-        ))}
-      </Section>
-
-      <PrimaryButton label="Start Recording" onPress={() => go({ name: 'camera', drillId, returnTo: { name: 'drill', drillId } })} />
-    </Page>
-  );
 }
 
 function CameraScreen({ drillId, currentBike, go }: { drillId: string; currentBike: Bike; go: (route: Route) => void }) {
@@ -778,79 +668,6 @@ function LapFlashOverlay({ videoRef, events }: { videoRef: React.RefObject<HTMLV
   );
 }
 
-function NativeVideoPreview({ uri, drillName, durationSeconds }: { uri: string; drillName: string; durationSeconds?: number }) {
-  const player = useVideoPlayer(uri, (p) => {
-    p.loop = true;
-    p.play();
-  });
-  const mins = durationSeconds != null ? Math.floor(durationSeconds / 60) : null;
-  const secs = durationSeconds != null ? Math.round(durationSeconds % 60) : null;
-  const durationLabel = mins != null && secs != null
-    ? mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
-    : null;
-
-  return (
-    <View style={nativeVideoStyles.container}>
-      <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="contain" />
-      {/* Overlay: drill name + duration top-left, processing status bottom */}
-      <View style={nativeVideoStyles.topBar} pointerEvents="none">
-        <Text style={nativeVideoStyles.drillLabel}>{drillName}</Text>
-        {durationLabel && <Text style={nativeVideoStyles.durationLabel}>{durationLabel}</Text>}
-      </View>
-      <View style={nativeVideoStyles.bottomBar} pointerEvents="none">
-        <Text style={nativeVideoStyles.processingLabel}>Processing laps on server...</Text>
-      </View>
-    </View>
-  );
-}
-
-const nativeVideoStyles = StyleSheet.create({
-  container: {
-    width: '100%',
-    aspectRatio: 9 / 16,
-    backgroundColor: colors.black,
-    borderRadius: radius.md,
-    overflow: 'hidden',
-  },
-  topBar: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  drillLabel: {
-    color: colors.white,
-    fontFamily: fonts.body,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  durationLabel: {
-    color: 'rgba(255,255,255,0.7)',
-    fontFamily: fonts.mono,
-    fontSize: 12,
-  },
-  bottomBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    alignItems: 'center',
-  },
-  processingLabel: {
-    color: 'rgba(255,255,255,0.6)',
-    fontFamily: fonts.body,
-    fontSize: 12,
-  },
-});
 
 function SessionSummaryScreen({
   drillId,
@@ -1259,360 +1076,6 @@ function DebugReprocessScreen() {
     </Page>
   );
 }
-
-function SessionsScreen({ go }: { go: (route: Route) => void }) {
-  const [cloudSessions, setCloudSessions] = useState<Session[] | null>(null);
-  const [cloudError, setCloudError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    if (!isSupabaseConfigured) {
-      setCloudSessions([]);
-      return () => {
-        active = false;
-      };
-    }
-    void loadSavedSessions()
-      .then((saved) => {
-        if (active) setCloudSessions(saved);
-      })
-      .catch((error) => {
-        if (active) {
-          setCloudSessions([]);
-          setCloudError(error instanceof Error ? error.message : 'Could not load saved sessions.');
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const visibleSessions = isSupabaseConfigured ? cloudSessions ?? [] : sessions;
-  const groups = useMemo(() => {
-    const byDate: Record<string, Session[]> = {};
-    for (const session of visibleSessions) {
-      const key = new Date(session.date).toISOString().slice(0, 10);
-      byDate[key] = [...(byDate[key] ?? []), session];
-    }
-    return Object.entries(byDate)
-      .sort(([a], [b]) => new Date(b).getTime() - new Date(a).getTime())
-      .map(([date, group]) => ({ date, sessions: group.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()) }));
-  }, [visibleSessions]);
-
-  return (
-    <Page title="Sessions" subtitle="Review your practice history.">
-      {cloudSessions === null && <Text style={styles.dateSummary}>Loading saved sessions...</Text>}
-      {cloudError && <Text style={[styles.saveMessage, styles.saveMessageError]}>{cloudError}</Text>}
-      {cloudSessions !== null && groups.length === 0 && <EmptyState title="No sessions yet" body="Record and save a drill session to start your training log." />}
-      {groups.map((group) => {
-        const lapCount = group.sessions.reduce((sum, session) => sum + session.laps.length, 0);
-        return (
-          <Section key={group.date} label={formatDate(group.date)}>
-            <Text style={styles.dateSummary}>{group.sessions.length} session{group.sessions.length === 1 ? '' : 's'} · {lapCount} laps</Text>
-            {group.sessions.map((session) => (
-              <SessionCard key={session.id} session={session} onPress={() => go({ name: 'session', sessionId: session.id, session, returnTo: { name: 'sessions' } })} />
-            ))}
-          </Section>
-        );
-      })}
-    </Page>
-  );
-}
-
-function SessionDetailScreen({ sessionId, cloudSession, go }: { sessionId: string; cloudSession?: Session; go: (route: Route) => void }) {
-  const session = cloudSession ?? sessions.find((item) => item.id === sessionId) ?? sessions[0];
-  const drill = drills.find((item) => item.id === session.drillId) ?? drills[0];
-  const bike = bikes.find((item) => item.id === session.bikeId) ?? bikes[0];
-  const setup = getSetupName(drill, session.setupVariantId);
-  const isStraightLine = drill.timingRule.detectionMode === 'straight-line';
-  const best = bestLap(session);
-  const avg = averageLap(session);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleteState, setDeleteState] = useState<'idle' | 'deleting' | 'error'>('idle');
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-
-  async function deleteSession() {
-    try {
-      setDeleteState('deleting');
-      setDeleteError(null);
-      await deleteSavedSession(session.id);
-      go({ name: 'sessions' });
-    } catch (error) {
-      setDeleteState('error');
-      setDeleteError(error instanceof Error ? error.message : 'Could not delete the session.');
-    }
-  }
-
-  const straightLineStats: [string, string][] = (() => {
-    const reps = session.laps;
-    const stops = reps.filter((r) => !r.stopOffScreen && r.stoppingDistanceMeters != null).map((r) => r.stoppingDistanceMeters as number);
-    const speeds = reps.map((r) => r.entrySpeedKph).filter((v): v is number => v != null);
-    const scores = reps.map((r) => r.brakingScoreG).filter((v): v is number => v != null);
-    const bestStop = stops.length ? Math.min(...stops) : null;
-    const avgSpeed = speeds.length ? speeds.reduce((s, v) => s + v, 0) / speeds.length : null;
-    const bestScore = scores.length ? Math.max(...scores) : null;
-    return [
-      ['Best Stop', bestStop != null ? `${bestStop.toFixed(1)} m` : '--'],
-      ['Avg Speed', avgSpeed != null ? `${avgSpeed.toFixed(0)} km/h` : '--'],
-      ['Reps', String(reps.length)],
-      ['Best Score', bestScore != null ? `${bestScore.toFixed(2)}g` : '--'],
-    ];
-  })();
-
-  return (
-    <Page title={drill.name} subtitle={`${setup} · ${bike.name} · ${formatDate(session.date)}`}>
-      <StatGrid
-        items={isStraightLine
-          ? straightLineStats
-          : [
-              ['Best', `${formatLap(best)}s`],
-              ['Average', `${formatLap(avg)}s`],
-              ['Laps', String(session.laps.length)],
-              ['Spread', `${formatLap(lapSpread(session))}s`],
-            ]}
-      />
-      <Section label="Video">
-        <View style={styles.videoPlaceholder}>
-          <Text style={styles.placeholderTitle}>{session.videoSaved ? 'Saved to your device' : 'No video saved'}</Text>
-          <Text style={styles.placeholderText}>
-            {session.videoSaved
-              ? "This app does not keep a copy — find the recording in your phone's Photos or Files app."
-              : 'This session does not include a recording.'}
-          </Text>
-        </View>
-      </Section>
-      <Section label={isStraightLine ? 'Braking Reps' : 'Lap Times'}>
-        <LapList laps={session.laps} isStraightLine={isStraightLine} />
-      </Section>
-      <Section label="Notes">
-        <Text style={styles.bodyText}>{session.notes ?? 'No notes saved.'}</Text>
-        {session.conditions && <Text style={styles.bodyText}>Conditions: {session.conditions}</Text>}
-      </Section>
-      <View style={styles.twoCol}>
-        <SecondaryButton label="View Drill" onPress={() => go({ name: 'drill', drillId: drill.id, returnTo: { name: 'session', sessionId: session.id, session } })} />
-        <SecondaryButton
-          label="View Progress"
-          onPress={() =>
-            go({
-              name: 'drillProgress',
-              context: { bikeId: bike.id, drillId: drill.id, setupVariantId: session.setupVariantId },
-              returnTo: { name: 'session', sessionId: session.id, session },
-            })
-          }
-        />
-      </View>
-      {cloudSession && !confirmDelete && (
-        <Pressable style={styles.sessionDeleteButton} onPress={() => setConfirmDelete(true)}>
-          <Text style={styles.sessionDeleteText}>Delete Session</Text>
-        </Pressable>
-      )}
-      {cloudSession && confirmDelete && (
-        <View style={styles.deleteConfirm}>
-          <Text style={styles.deleteConfirmTitle}>Delete this session?</Text>
-          <Text style={styles.cardSub}>Its lap data, detection events, notes, and video will be permanently removed.</Text>
-          {deleteError && <Text style={[styles.saveMessage, styles.saveMessageError]}>{deleteError}</Text>}
-          <View style={styles.deleteActions}>
-            <Pressable style={styles.deleteCancelButton} onPress={() => setConfirmDelete(false)}>
-              <Text style={styles.secondaryButtonText}>Cancel</Text>
-            </Pressable>
-            <Pressable style={styles.deleteConfirmButton} onPress={() => void deleteSession()}>
-              <Text style={styles.primaryButtonText}>{deleteState === 'deleting' ? 'Deleting...' : 'Delete Permanently'}</Text>
-            </Pressable>
-          </View>
-        </View>
-      )}
-    </Page>
-  );
-}
-
-function hasTimedLaps(session: Session) {
-  return session.laps.some((lap) => Number.isFinite(lap.time) && lap.time > 0);
-}
-
-function timedSessionsForContext(sessionData: Session[], context: ProgressContext) {
-  return sessionsForContext(sessionData, context).filter(hasTimedLaps);
-}
-
-function useTrainingSessions() {
-  const [trainingSessions, setTrainingSessions] = useState<Session[] | null>(isSupabaseConfigured ? null : sessions);
-  const [trainingError, setTrainingError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    if (!isSupabaseConfigured) {
-      setTrainingSessions(sessions);
-      setTrainingError(null);
-      return () => {
-        active = false;
-      };
-    }
-    void loadSavedSessions()
-      .then((saved) => {
-        if (active) {
-          setTrainingSessions(saved);
-          setTrainingError(null);
-        }
-      })
-      .catch((error) => {
-        if (active) {
-          setTrainingSessions([]);
-          setTrainingError(error instanceof Error ? error.message : 'Could not load saved sessions.');
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  return { trainingSessions, trainingError };
-}
-
-function ProgressScreen({
-  currentBikeId,
-  go,
-}: {
-  currentBikeId: string;
-  go: (route: Route) => void;
-}) {
-  const { trainingSessions, trainingError } = useTrainingSessions();
-  const sessionData = trainingSessions ?? [];
-  const contexts = useMemo(() => {
-    const seen = new Set<string>();
-    const rows: ProgressContext[] = [];
-    for (const session of sessionData.filter((item) => item.bikeId === currentBikeId && hasTimedLaps(item))) {
-      const context = { bikeId: session.bikeId, drillId: session.drillId, setupVariantId: session.setupVariantId };
-      const key = contextKey(context);
-      if (!seen.has(key)) {
-        seen.add(key);
-        rows.push(context);
-      }
-    }
-    return rows;
-  }, [currentBikeId, sessionData]);
-
-  return (
-    <Page title="Progress" subtitle="Track improvement by drill.">
-      {trainingSessions === null && <Text style={styles.dateSummary}>Loading saved sessions...</Text>}
-      {trainingError && <Text style={[styles.saveMessage, styles.saveMessageError]}>{trainingError}</Text>}
-      {trainingSessions !== null && contexts.length === 0 ? (
-        <EmptyState title="No progress yet" body="Record a session on this bike to build a trend." />
-      ) : (
-        contexts.map((context) => <ProgressCard key={contextKey(context)} context={context} sessionData={sessionData} go={go} />)
-      )}
-    </Page>
-  );
-}
-
-function DrillProgressScreen({ context, go }: { context: ProgressContext; go: (route: Route) => void }) {
-  const { trainingSessions, trainingError } = useTrainingSessions();
-  const sessionData = trainingSessions ?? [];
-  const drill = drills.find((item) => item.id === context.drillId) ?? drills[0];
-  const bike = bikes.find((item) => item.id === context.bikeId) ?? bikes[0];
-  const setup = getSetupName(drill, context.setupVariantId);
-  const contextSessions = timedSessionsForContext(sessionData, context);
-  const bestBySession = contextSessions.map(bestLap);
-  const totalLaps = contextSessions.reduce((sum, session) => sum + session.laps.length, 0);
-  const best = bestBySession.length ? Math.min(...bestBySession) : undefined;
-  const latest = latestSession(contextSessions);
-
-  return (
-    <Page title={`${drill.name} Progress`} subtitle={`${bike.name} · ${setup}`}>
-      {trainingSessions === null && <Text style={styles.dateSummary}>Loading saved sessions...</Text>}
-      {trainingError && <Text style={[styles.saveMessage, styles.saveMessageError]}>{trainingError}</Text>}
-      <Section label="Lap Time Over Time">
-        {bestBySession.length > 1 ? (
-          <LineChart values={bestBySession} height={150} />
-        ) : (
-          <EmptyState title="Not enough sessions" body="Record another timed session in this setup to build a trend." />
-        )}
-      </Section>
-      <StatGrid
-        items={[
-          ['Best', `${formatLap(best)}s`],
-          ['Latest Best', latest ? `${formatLap(bestLap(latest))}s` : '--'],
-          ['Sessions', String(contextSessions.length)],
-          ['Total Laps', String(totalLaps)],
-        ]}
-      />
-      <Section label="Session History">
-        {contextSessions.length === 0 ? (
-          <EmptyState title="No timed sessions" body="This timing context does not have completed laps yet." />
-        ) : (
-          contextSessions
-            .slice()
-            .reverse()
-            .map((session) => (
-              <SessionCard key={session.id} session={session} onPress={() => go({ name: 'session', sessionId: session.id, session, returnTo: { name: 'drillProgress', context } })} />
-            ))
-        )}
-      </Section>
-    </Page>
-  );
-}
-
-function ProgressCard({ context, sessionData, go }: { context: ProgressContext; sessionData: Session[]; go: (route: Route) => void }) {
-  const drill = drills.find((item) => item.id === context.drillId) ?? drills[0];
-  const setup = getSetupName(drill, context.setupVariantId);
-  const contextSessions = timedSessionsForContext(sessionData, context);
-  const bestBySession = contextSessions.map(bestLap);
-  const latest = latestSession(contextSessions);
-  const best = bestBySession.length ? Math.min(...bestBySession) : undefined;
-
-  return (
-    <Pressable style={styles.progressCard} onPress={() => go({ name: 'drillProgress', context, returnTo: { name: 'progress' } })}>
-      <Text style={styles.cardTitle}>{drill.name}</Text>
-      <Text style={styles.cardSub}>{setup}</Text>
-      {bestBySession.length > 1 ? (
-        <LineChart values={bestBySession} height={112} />
-      ) : (
-        <Text style={styles.cardSub}>Not enough sessions for a trend yet.</Text>
-      )}
-      <View style={styles.cardBottomRow}>
-        <Text style={styles.metricText}>Best: {formatLap(best)}s</Text>
-        <Text style={styles.metricText}>Latest: {latest ? `${formatLap(bestLap(latest))}s` : '--'}</Text>
-      </View>
-      <View style={styles.cardBottomRow}>
-        <Text style={styles.cardSub}>{contextSessions.length} session{contextSessions.length === 1 ? '' : 's'}</Text>
-        <Text style={styles.cardSub}>Last: {latest ? formatDate(latest.date, true) : 'Not yet'}</Text>
-      </View>
-    </Pressable>
-  );
-}
-
-
-function SessionCard({ session, onPress }: { session: Session; onPress: () => void }) {
-  const drill = drills.find((item) => item.id === session.drillId);
-  const bike = bikes.find((item) => item.id === session.bikeId);
-  const setup = getSetupName(drill, session.setupVariantId);
-  const isPending = session.status === 'queued' || session.status === 'processing';
-  const isError = session.status === 'error';
-  return (
-    <Pressable style={styles.sessionCard} onPress={onPress}>
-      <Text style={styles.cardTag}>{formatDate(session.date)}</Text>
-      <Text style={styles.cardTitle}>{drill?.name ?? session.drillId}</Text>
-      <Text style={styles.cardSub}>{setup} · {bike?.name ?? session.bikeId}</Text>
-      {isPending && (
-        <View style={[styles.statusPill, styles.statusPillPending]}>
-          <Text style={styles.statusPillText}>Processing…</Text>
-        </View>
-      )}
-      {isError && (
-        <View style={[styles.statusPill, styles.statusPillError]}>
-          <Text style={[styles.statusPillText, styles.statusPillErrorText]}>{session.errorMessage ?? 'Processing failed'}</Text>
-        </View>
-      )}
-      {!isPending && !isError && (
-        <View style={styles.cardBottomRow}>
-          <Text style={styles.metricText}>Best {formatLap(bestLap(session))}s</Text>
-          <Text style={styles.metricText}>Avg {formatLap(averageLap(session))}s</Text>
-          <Text style={styles.metricText}>{session.laps.length} laps</Text>
-        </View>
-      )}
-      <Text style={styles.cardSub}>{session.videoSaved ? 'Video' : 'No video'}{session.notes ? ' · Notes' : ''}</Text>
-    </Pressable>
-  );
-}
-
 function Page({ children, title, subtitle }: { children: React.ReactNode; title?: string; subtitle?: string }) {
   return (
     <ScrollView contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
@@ -1689,9 +1152,10 @@ function StatGrid({ items }: { items: [string, string][] }) {
 }
 
 function MetricMini({ label, value }: { label: string; value: string }) {
+  const isBest = label === 'Best' || label === 'Best Stop' || label === 'Best Score' || label === 'Latest Best';
   return (
     <View style={styles.statMini}>
-      <Text style={styles.statMiniValue}>{value}</Text>
+      <Text style={[styles.statMiniValue, isBest && styles.statMiniValueBest]}>{value}</Text>
       <Text style={styles.statMiniLabel}>{label}</Text>
     </View>
   );
@@ -1706,14 +1170,19 @@ const lapTagLabels: Record<'warmup' | 'cooldown' | 'break', string> = {
 function LapList({ laps, isStraightLine }: { laps: Lap[]; isStraightLine?: boolean }) {
   const scoredTimes = laps.filter((lap) => !lap.excludedFromScoring).map((lap) => lap.time);
   const best = scoredTimes.length ? Math.min(...scoredTimes) : undefined;
+  const avg = scoredTimes.length ? scoredTimes.reduce((sum, t) => sum + t, 0) / scoredTimes.length : undefined;
 
   if (isStraightLine) {
     const scores = laps.map((r) => r.brakingScoreG).filter((v): v is number => v != null);
     const bestScore = scores.length ? Math.max(...scores) : undefined;
+    const avgScore = scores.length ? scores.reduce((sum, v) => sum + v, 0) / scores.length : undefined;
     return (
       <View style={styles.lapList}>
         {laps.map((rep) => {
           const isPB = rep.brakingScoreG != null && rep.brakingScoreG === bestScore;
+          const isImproving = !isPB && !rep.stopOffScreen && rep.brakingScoreG != null && avgScore != null && rep.brakingScoreG > avgScore;
+          const isCaution = !isPB && Boolean(rep.stopOffScreen);
+          const accent = isPB ? styles.lapTextBest : isImproving ? styles.lapTextImproving : isCaution ? styles.lapTextCaution : undefined;
           const speedStr = rep.entrySpeedKph != null
             ? `${rep.speedMethod === 'kinematic' ? '~' : ''}${rep.entrySpeedKph.toFixed(0)} km/h`
             : '--';
@@ -1726,9 +1195,9 @@ function LapList({ laps, isStraightLine }: { laps: Lap[]; isStraightLine?: boole
           return (
             <View key={rep.lapNumber} style={[styles.lapRow, isPB && styles.lapRowBest]}>
               <Text style={[styles.lapNum, isPB && styles.lapTextBest]}>R{rep.lapNumber}</Text>
-              <Text style={[styles.lapTime, isPB && styles.lapTextBest]}>{`↓ ${speedStr}`}</Text>
-              <Text style={[styles.lapTime, isPB && styles.lapTextBest]}>{`◀ ${stopStr}`}</Text>
-              <Text style={[styles.lapTime, isPB && styles.lapTextBest]}>{scoreStr}</Text>
+              <Text style={[styles.lapTime, accent]}>{`↓ ${speedStr}`}</Text>
+              <Text style={[styles.lapTime, accent]}>{`◀ ${stopStr}`}</Text>
+              <Text style={[styles.lapTime, accent]}>{scoreStr}</Text>
               {isPB && <Text style={styles.pbText}>PB</Text>}
             </View>
           );
@@ -1741,11 +1210,14 @@ function LapList({ laps, isStraightLine }: { laps: Lap[]; isStraightLine?: boole
     <View style={styles.lapList}>
       {laps.map((lap) => {
         const isBest = !lap.excludedFromScoring && lap.time === best;
+        const isImproving = !isBest && !lap.excludedFromScoring && avg != null && lap.time < avg;
+        const isCaution = !isBest && Boolean(lap.excludedFromScoring);
+        const accent = isBest ? styles.lapTextBest : isImproving ? styles.lapTextImproving : isCaution ? styles.lapTextCaution : undefined;
         const tag = lap.lapLabel ? lapTagLabels[lap.lapLabel] : undefined;
         return (
           <View key={lap.lapNumber} style={[styles.lapRow, isBest && styles.lapRowBest]}>
             <Text style={[styles.lapNum, isBest && styles.lapTextBest]}>L{lap.lapNumber}</Text>
-            <Text style={[styles.lapTime, isBest && styles.lapTextBest]}>{formatLap(lap.time)}</Text>
+            <Text style={[styles.lapTime, accent]}>{formatLap(lap.time)}</Text>
             {lap.entrySpeedKph != null && <Text style={styles.lapSpeed}>{lap.entrySpeedKph.toFixed(0)} km/h</Text>}
             {isBest && <Text style={styles.pbText}>PB</Text>}
             {tag && <Text style={styles.lapTag}>{tag}</Text>}
@@ -1769,6 +1241,9 @@ const styles = StyleSheet.create({
   screen: {
     backgroundColor: colors.silver,
     flex: 1,
+  },
+  screenDark: {
+    backgroundColor: colors.ink950,
   },
   toast: {
     backgroundColor: colors.charcoal,
@@ -1806,30 +1281,8 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: 14,
     fontWeight: '800',
-    letterSpacing: 1,
+    letterSpacing: tracking.wide,
     textTransform: 'uppercase',
-  },
-  statusPill: {
-    alignSelf: 'flex-start',
-    borderRadius: radius.pill,
-    marginVertical: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-  },
-  statusPillPending: {
-    backgroundColor: colors.silverMid,
-  },
-  statusPillError: {
-    backgroundColor: colors.red,
-  },
-  statusPillText: {
-    color: colors.charcoal,
-    fontFamily: fonts.body,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  statusPillErrorText: {
-    color: colors.white,
   },
   page: {
     paddingHorizontal: spacing.pageX,
@@ -1862,7 +1315,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 1.7,
+    letterSpacing: tracking.wide,
     textTransform: 'uppercase',
   },
   pageHeader: {
@@ -1873,7 +1326,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: 40,
     fontWeight: '800',
-    letterSpacing: -0.4,
+    letterSpacing: tracking.hero,
     lineHeight: 42,
     textTransform: 'uppercase',
   },
@@ -1894,13 +1347,10 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 1.8,
+    letterSpacing: tracking.wide,
     marginBottom: 12,
     paddingBottom: 8,
     textTransform: 'uppercase',
-  },
-  drillSetupDiagram: {
-    marginHorizontal: -16,
   },
   primaryButton: {
     alignItems: 'center',
@@ -1916,7 +1366,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 1.3,
+    letterSpacing: tracking.wide,
     textTransform: 'uppercase',
   },
   secondaryButton: {
@@ -1934,7 +1384,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 1.1,
+    letterSpacing: tracking.wide,
     textTransform: 'uppercase',
   },
   twoCol: {
@@ -1943,46 +1393,6 @@ const styles = StyleSheet.create({
   },
   drillGrid: {
     gap: 14,
-  },
-  drillLibraryCard: {
-    backgroundColor: colors.white,
-    borderColor: colors.silverMid,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    gap: 12,
-    padding: 16,
-  },
-  drillCardTitle: {
-    color: colors.charcoal,
-    fontFamily: fonts.display,
-    fontSize: 25,
-    fontWeight: '800',
-  },
-  sessionCard: {
-    backgroundColor: colors.white,
-    borderColor: colors.silverMid,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    gap: 8,
-    marginBottom: 10,
-    padding: 16,
-  },
-  progressCard: {
-    backgroundColor: colors.white,
-    borderColor: colors.silverMid,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    gap: 12,
-    marginBottom: 14,
-    padding: 16,
-  },
-  cardTag: {
-    color: colors.silverDark,
-    fontFamily: fonts.display,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
   },
   cardTitle: {
     color: colors.charcoal,
@@ -2006,6 +1416,7 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     fontFamily: fonts.mono,
     fontSize: 13,
+    fontVariant: ['tabular-nums'],
     fontWeight: '800',
   },
   contextPill: {
@@ -2021,7 +1432,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 1,
+    letterSpacing: tracking.wide,
     textTransform: 'uppercase',
   },
   bodyText: {
@@ -2091,6 +1502,7 @@ const styles = StyleSheet.create({
     borderColor: colors.silverMid,
     borderRadius: radius.md,
     borderWidth: 1,
+    boxShadow: shadows.tight,
     flexGrow: 1,
     minWidth: '45%',
     padding: 14,
@@ -2099,39 +1511,19 @@ const styles = StyleSheet.create({
     color: colors.charcoal,
     fontFamily: fonts.mono,
     fontSize: 19,
+    fontVariant: ['tabular-nums'],
     fontWeight: '800',
+  },
+  statMiniValueBest: {
+    color: colors.pbBest,
   },
   statMiniLabel: {
     color: colors.silverDark,
     fontFamily: fonts.display,
     fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 1.2,
+    letterSpacing: tracking.wide,
     marginTop: 5,
-    textTransform: 'uppercase',
-  },
-  progressionBlock: {
-    backgroundColor: colors.white,
-    borderColor: colors.silverMid,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginBottom: 10,
-    padding: 14,
-  },
-  progressionTitle: {
-    color: colors.charcoal,
-    fontFamily: fonts.display,
-    fontSize: 16,
-    fontWeight: '800',
-    marginBottom: 6,
-  },
-  smallLabel: {
-    color: colors.red,
-    fontFamily: fonts.display,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1.1,
-    marginTop: 8,
     textTransform: 'uppercase',
   },
   cameraShell: {
@@ -2150,7 +1542,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 1.2,
+    letterSpacing: tracking.wide,
     textTransform: 'uppercase',
   },
   cameraView: {
@@ -2309,22 +1701,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.charcoal,
     borderRadius: radius.md,
+    boxShadow: shadows.panel,
     marginBottom: 20,
     padding: 22,
   },
   resultLabel: {
-    color: colors.red,
+    color: colors.pbBest,
     fontFamily: fonts.display,
     fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 1.5,
+    letterSpacing: tracking.wide,
     textTransform: 'uppercase',
   },
   resultValue: {
     color: colors.white,
     fontFamily: fonts.mono,
     fontSize: 52,
+    fontVariant: ['tabular-nums'],
     fontWeight: '800',
+    letterSpacing: tracking.tightNum,
     lineHeight: 62,
   },
   resultSub: {
@@ -2378,7 +1773,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 1.2,
+    letterSpacing: tracking.wide,
     textTransform: 'uppercase',
   },
   sessionDeleteButton: {
@@ -2391,7 +1786,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.display,
     fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 1.2,
+    letterSpacing: tracking.wide,
     textTransform: 'uppercase',
   },
   deleteConfirm: {
@@ -2459,13 +1854,20 @@ const styles = StyleSheet.create({
     flex: 1,
     fontFamily: fonts.mono,
     fontSize: 16,
+    fontVariant: ['tabular-nums'],
     fontWeight: '800',
   },
   lapTextBest: {
     color: colors.white,
   },
+  lapTextImproving: {
+    color: colors.improving,
+  },
+  lapTextCaution: {
+    color: colors.caution,
+  },
   pbText: {
-    color: colors.red,
+    color: colors.pbBest,
     fontFamily: fonts.display,
     fontSize: 11,
     fontWeight: '800',
@@ -2482,31 +1884,8 @@ const styles = StyleSheet.create({
     color: colors.silverDark,
     fontFamily: fonts.mono,
     fontSize: 13,
+    fontVariant: ['tabular-nums'],
     fontWeight: '600',
-  },
-  filterRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 18,
-  },
-  filterChip: {
-    borderColor: colors.silverMid,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    color: colors.charcoal,
-    fontFamily: fonts.display,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    textTransform: 'uppercase',
-  },
-  dateSummary: {
-    color: colors.silverDark,
-    fontFamily: fonts.body,
-    fontSize: 13,
-    marginBottom: 10,
   },
   emptyState: {
     backgroundColor: colors.white,

@@ -154,3 +154,26 @@ export type ProgressContext = {
   drillId: string;
   setupVariantId: string;
 };
+
+export type ReturnRoute =
+  | { name: 'home' }
+  | { name: 'drills' }
+  | { name: 'drill'; drillId: string }
+  | { name: 'sessions' }
+  | { name: 'session'; sessionId: string; session?: Session }
+  | { name: 'progress' }
+  | { name: 'drillProgress'; context: ProgressContext };
+
+export type Route =
+  | { name: 'home' }
+  | { name: 'drills' }
+  | { name: 'drill'; drillId: string; returnTo?: ReturnRoute }
+  | { name: 'camera'; drillId: string; returnTo?: ReturnRoute }
+  | { name: 'summary'; drillId: string; draft?: SessionDraft; returnTo?: ReturnRoute }
+  | { name: 'sessions' }
+  | { name: 'session'; sessionId: string; session?: Session; returnTo?: ReturnRoute }
+  | { name: 'progress' }
+  | { name: 'drillProgress'; context: ProgressContext; returnTo?: ReturnRoute };
+
+/** Navigation function every extracted screen receives to move between routes. */
+export type GoFn = (route: Route) => void;

@@ -7,6 +7,8 @@ type Props = {
   values: number[];
   height?: number;
   emptyLabel?: string;
+  /** Dark-card variant for the redesigned dashboard/progression screens — transparent track, mist/red-500 ink. */
+  dark?: boolean;
 };
 
 const WIDTH = 320;
@@ -14,14 +16,24 @@ const PAD_X = 26;
 const PAD_TOP = 18;
 const PAD_BOTTOM = 30;
 
-export function LineChart({ values, height = 112, emptyLabel = 'Not enough sessions for a trend yet.' }: Props) {
+export function LineChart({ values, height = 112, emptyLabel = 'Not enough sessions for a trend yet.', dark = false }: Props) {
   if (values.length < 2) {
     return (
-      <View style={[styles.empty, { height }]}>
-        <Text style={styles.emptyText}>{emptyLabel}</Text>
+      <View style={[styles.empty, dark && styles.emptyDark, { height }]}>
+        <Text style={[styles.emptyText, dark && styles.emptyTextDark]}>{emptyLabel}</Text>
       </View>
     );
   }
+
+  const ink = {
+    track: dark ? 'transparent' : colors.silver,
+    trackStroke: dark ? 'transparent' : colors.silverMid,
+    grid: dark ? 'rgba(242,241,240,0.14)' : colors.white,
+    line: dark ? colors.red500 : colors.red,
+    dot: dark ? colors.graphite700 : colors.charcoal,
+    dotStroke: dark ? colors.mist100 : colors.white,
+    caption: dark ? colors.mist500 : colors.silverDark,
+  };
 
   const chartHeight = height;
   const innerWidth = WIDTH - PAD_X * 2;
@@ -43,24 +55,24 @@ export function LineChart({ values, height = 112, emptyLabel = 'Not enough sessi
   const areaPath = `${linePath} L ${points[points.length - 1].x} ${chartHeight - PAD_BOTTOM} L ${points[0].x} ${chartHeight - PAD_BOTTOM} Z`;
 
   return (
-    <View style={[styles.wrap, { height: chartHeight }]}>
+    <View style={[styles.wrap, dark && styles.wrapDark, { height: chartHeight }]}>
       <Svg width="100%" height="100%" viewBox={`0 0 ${WIDTH} ${chartHeight}`} preserveAspectRatio="none">
         <Defs>
           <LinearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor={colors.red} stopOpacity="0.2" />
-            <Stop offset="1" stopColor={colors.red} stopOpacity="0.02" />
+            <Stop offset="0" stopColor={ink.line} stopOpacity="0.2" />
+            <Stop offset="1" stopColor={ink.line} stopOpacity="0.02" />
           </LinearGradient>
         </Defs>
-        <Rect x="0.5" y="0.5" width={WIDTH - 1} height={chartHeight - 1} rx="8" fill={colors.silver} stroke={colors.silverMid} />
+        <Rect x="0.5" y="0.5" width={WIDTH - 1} height={chartHeight - 1} rx="8" fill={ink.track} stroke={ink.trackStroke} />
         {[0, 0.5, 1].map((ratio) => {
           const y = PAD_TOP + ratio * innerHeight;
-          return <Line key={ratio} x1={PAD_X} y1={y} x2={WIDTH - PAD_X} y2={y} stroke={colors.white} strokeWidth="1.5" />;
+          return <Line key={ratio} x1={PAD_X} y1={y} x2={WIDTH - PAD_X} y2={y} stroke={ink.grid} strokeWidth="1.5" />;
         })}
         {points.map((point) => (
-          <Line key={`tick-${point.index}`} x1={point.x} y1={PAD_TOP} x2={point.x} y2={chartHeight - PAD_BOTTOM} stroke={colors.white} strokeWidth="0.8" opacity="0.7" />
+          <Line key={`tick-${point.index}`} x1={point.x} y1={PAD_TOP} x2={point.x} y2={chartHeight - PAD_BOTTOM} stroke={ink.grid} strokeWidth="0.8" opacity="0.7" />
         ))}
         <Path d={areaPath} fill="url(#chartFill)" />
-        <Path d={linePath} fill="none" stroke={colors.red} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+        <Path d={linePath} fill="none" stroke={ink.line} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
         <G>
           {points.map((point) => (
             <G key={`${point.index}-${point.value}`}>
@@ -68,22 +80,22 @@ export function LineChart({ values, height = 112, emptyLabel = 'Not enough sessi
                 cx={point.x}
                 cy={point.y}
                 r={point.index === bestIndex ? 7 : 5}
-                fill={point.index === bestIndex ? colors.red : colors.charcoal}
-                stroke={colors.white}
+                fill={point.index === bestIndex ? ink.line : ink.dot}
+                stroke={ink.dotStroke}
                 strokeWidth="2"
               />
               {point.index === bestIndex && (
-                <SvgText x={point.x} y={Math.max(12, point.y - 12)} fill={colors.red} fontSize="9" fontWeight="800" textAnchor="middle">
+                <SvgText x={point.x} y={Math.max(12, point.y - 12)} fill={ink.line} fontSize="9" fontWeight="800" textAnchor="middle">
                   BEST
                 </SvgText>
               )}
             </G>
           ))}
         </G>
-        <SvgText x={PAD_X} y={chartHeight - 10} fill={colors.silverDark} fontSize="10" fontWeight="800">
+        <SvgText x={PAD_X} y={chartHeight - 10} fill={ink.caption} fontSize="10" fontWeight="800">
           BEST {formatLap(min)}s
         </SvgText>
-        <SvgText x={WIDTH - PAD_X} y={chartHeight - 10} fill={colors.silverDark} fontSize="10" fontWeight="800" textAnchor="end">
+        <SvgText x={WIDTH - PAD_X} y={chartHeight - 10} fill={ink.caption} fontSize="10" fontWeight="800" textAnchor="end">
           LATEST {formatLap(latest)}s
         </SvgText>
       </Svg>
@@ -97,6 +109,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: 'hidden',
   },
+  wrapDark: {
+    backgroundColor: 'transparent',
+  },
   empty: {
     alignItems: 'center',
     backgroundColor: colors.silver,
@@ -106,11 +121,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 18,
   },
+  emptyDark: {
+    backgroundColor: colors.graphite800,
+    borderColor: 'rgba(242,241,240,0.14)',
+  },
   emptyText: {
     color: colors.silverDark,
     fontFamily: fonts.body,
     fontSize: 13,
     fontWeight: '700',
     textAlign: 'center',
+  },
+  emptyTextDark: {
+    color: colors.mist500,
   },
 });
