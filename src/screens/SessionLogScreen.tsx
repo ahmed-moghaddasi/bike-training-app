@@ -4,6 +4,7 @@ import { buildNavItems, EmptyState, Page } from '../components/ScreenKit';
 import { SessionCard } from '../components/SessionCard';
 import { bikes, drills, sessions } from '../data/seed';
 import { averageLap, bestLap, formatDate, getSetupName } from '../lib/metrics';
+import { DRILL_PHOTOS } from '../lib/photos';
 import { isSupabaseConfigured, loadSavedSessions } from '../lib/supabase';
 import { colors, fonts, tracking } from '../theme';
 import type { GoFn, Session } from '../types';
@@ -102,6 +103,7 @@ export function SessionLogScreen({ currentBikeId, go }: { currentBikeId: string;
                           ]
                       : [{ label: 'Status', value: session.status ?? 'Pending' }]
                   }
+                  imageSource={DRILL_PHOTOS[session.drillId]}
                   onPress={() => go({ name: 'session', sessionId: session.id, session, returnTo: { name: 'sessions' } })}
                 />
               );

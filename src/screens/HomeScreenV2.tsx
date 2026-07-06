@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
 import { BikeSelector } from '../components/BikeSelector';
 import { buildNavItems, Page } from '../components/ScreenKit';
 import { DrillCard } from '../components/DrillCard';
@@ -13,6 +13,7 @@ import {
   latestSession,
   sessionsForContext,
 } from '../lib/metrics';
+import { DRILL_PHOTOS, SHORTCUT_PHOTOS } from '../lib/photos';
 import { isSupabaseConfigured, loadSavedSessions } from '../lib/supabase';
 import { colors, fonts, radius } from '../theme';
 import type { GoFn, Session } from '../types';
@@ -118,10 +119,17 @@ export function HomeScreenV2({
       </View>
 
       {focusDrill && (
-        <Pressable style={styles.mediaBanner} onPress={() => onOpenDrill(focusDrill.id)}>
-          <Text style={styles.mediaEyebrow}>Today's Focus</Text>
-          <Text style={styles.mediaTitle}>{focusDrill.name}</Text>
-          <Text style={styles.mediaMeta}>{focusDrill.shortDescription}</Text>
+        <Pressable onPress={() => onOpenDrill(focusDrill.id)}>
+          <ImageBackground
+            source={DRILL_PHOTOS[focusDrill.id]}
+            style={styles.mediaBanner}
+            imageStyle={styles.mediaBannerImage}
+          >
+            <View style={styles.mediaScrim} />
+            <Text style={styles.mediaEyebrow}>Today's Focus</Text>
+            <Text style={styles.mediaTitle}>{focusDrill.name}</Text>
+            <Text style={styles.mediaMeta}>{focusDrill.shortDescription}</Text>
+          </ImageBackground>
         </Pressable>
       )}
 
@@ -175,6 +183,7 @@ export function HomeScreenV2({
                 name={drill.name}
                 skillTag={skillTag(drill)}
                 meta={drill.whatThisTrains[1] ?? ''}
+                imageSource={DRILL_PHOTOS[drill.id]}
                 onPress={() => onOpenDrill(drill.id)}
               />
             ))}
@@ -185,18 +194,24 @@ export function HomeScreenV2({
       <View style={styles.shortcutGrid}>
         <View style={styles.shortcutUnit}>
           <Text style={styles.shortcutHeading}>Progression</Text>
-          <Pressable style={styles.shortcutCard} onPress={onOpenProgress}>
-            <Text style={styles.shortcutEyebrow}>Rider Growth</Text>
-            <Text style={styles.shortcutTitle}>{growthPct != null ? `${growthPct > 0 ? '+' : ''}${growthPct}%` : '--'}</Text>
-            <Text style={styles.shortcutMeta}>{previousDrill ? `${previousDrill.name} consistency` : 'Record a session to start'}</Text>
+          <Pressable onPress={onOpenProgress}>
+            <ImageBackground source={SHORTCUT_PHOTOS.progression} style={styles.shortcutCard} imageStyle={styles.shortcutCardImage}>
+              <View style={styles.shortcutScrim} />
+              <Text style={styles.shortcutEyebrow}>Rider Growth</Text>
+              <Text style={styles.shortcutTitle}>{growthPct != null ? `${growthPct > 0 ? '+' : ''}${growthPct}%` : '--'}</Text>
+              <Text style={styles.shortcutMeta}>{previousDrill ? `${previousDrill.name} consistency` : 'Record a session to start'}</Text>
+            </ImageBackground>
           </Pressable>
         </View>
         <View style={styles.shortcutUnit}>
           <Text style={styles.shortcutHeading}>Session Log</Text>
-          <Pressable style={styles.shortcutCard} onPress={onOpenSessions}>
-            <Text style={styles.shortcutEyebrow}>Last Ride</Text>
-            <Text style={styles.shortcutTitle}>{previousSession ? `${previousSession.laps.length} Laps` : '--'}</Text>
-            <Text style={styles.shortcutMeta}>{previousSession ? `Best ${formatLap(bestLap(previousSession))}` : 'No sessions yet'}</Text>
+          <Pressable onPress={onOpenSessions}>
+            <ImageBackground source={SHORTCUT_PHOTOS.sessionLog} style={styles.shortcutCard} imageStyle={styles.shortcutCardImage}>
+              <View style={styles.shortcutScrim} />
+              <Text style={styles.shortcutEyebrow}>Last Ride</Text>
+              <Text style={styles.shortcutTitle}>{previousSession ? `${previousSession.laps.length} Laps` : '--'}</Text>
+              <Text style={styles.shortcutMeta}>{previousSession ? `Best ${formatLap(bestLap(previousSession))}` : 'No sessions yet'}</Text>
+            </ImageBackground>
           </Pressable>
         </View>
       </View>
@@ -246,6 +261,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: HAIRLINE,
     backgroundColor: colors.graphite800,
+  },
+  mediaBannerImage: {
+    borderRadius: radius.xl,
+  },
+  mediaScrim: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(5,6,6,0.4)',
   },
   mediaEyebrow: {
     color: 'rgba(242,241,240,0.72)',
@@ -390,6 +412,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(242,241,240,0.16)',
     backgroundColor: colors.graphite700,
+    overflow: 'hidden',
+  },
+  shortcutCardImage: {
+    borderRadius: radius.xl,
+  },
+  shortcutScrim: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(5,6,6,0.5)',
   },
   shortcutEyebrow: {
     color: 'rgba(242,241,240,0.7)',

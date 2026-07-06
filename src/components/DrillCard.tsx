@@ -1,4 +1,4 @@
-import { ImageBackground, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { ImageBackground, Pressable, StyleSheet, Text, View, type ImageSourcePropType, type StyleProp, type ViewStyle } from 'react-native';
 import { colors, fonts, radius, tracking } from '../theme';
 
 interface DrillCardProps {
@@ -6,14 +6,14 @@ interface DrillCardProps {
   name: string;
   skillTag: string;
   meta?: string;
-  imageUri?: string;
+  imageSource?: ImageSourcePropType;
   isReady?: boolean;
   onPress: () => void;
   style?: StyleProp<ViewStyle>;
 }
 
 /** Full-bleed photo card with number badge + skill tag. Used in the dashboard carousel and drills library list — pass `style` to override the default fixed carousel width (e.g. `{ width: '100%' }` for a vertical list). */
-export function DrillCard({ index, name, skillTag, meta, imageUri, isReady = true, onPress, style }: DrillCardProps) {
+export function DrillCard({ index, name, skillTag, meta, imageSource, isReady = true, onPress, style }: DrillCardProps) {
   return (
     <Pressable
       onPress={isReady ? onPress : undefined}
@@ -22,8 +22,8 @@ export function DrillCard({ index, name, skillTag, meta, imageUri, isReady = tru
       accessibilityLabel={isReady ? name : `${name}, coming soon`}
       accessibilityState={{ disabled: !isReady }}
     >
-      {imageUri ? (
-        <ImageBackground source={{ uri: imageUri }} style={StyleSheet.absoluteFill}>
+      {imageSource ? (
+        <ImageBackground source={imageSource} style={StyleSheet.absoluteFill}>
           <View style={styles.scrim} />
         </ImageBackground>
       ) : (

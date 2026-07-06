@@ -2,6 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { DrillCard } from '../components/DrillCard';
 import { buildNavItems, Page } from '../components/ScreenKit';
 import { bikes, drills } from '../data/seed';
+import { DRILL_PHOTOS } from '../lib/photos';
 import { colors, fonts, tracking } from '../theme';
 import type { DrillGroup, GoFn } from '../types';
 
@@ -49,6 +50,7 @@ export function DrillsScreen({ currentBikeId, go }: { currentBikeId: string; go:
                   skillTag={drill.isReady ? skillTag(drill) : 'Coming soon'}
                   meta={drill.shortDescription}
                   isReady={drill.isReady}
+                  imageSource={DRILL_PHOTOS[drill.id]}
                   onPress={() => go({ name: 'drill', drillId: drill.id, returnTo: { name: 'drills' } })}
                   style={styles.card}
                 />

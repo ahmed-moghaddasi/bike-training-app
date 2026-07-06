@@ -1,4 +1,4 @@
-import { ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ImageBackground, Pressable, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
 import { colors, fonts, radius, tracking } from '../theme';
 
 export type SessionCardStat = {
@@ -12,12 +12,12 @@ interface SessionCardProps {
   drillName: string;
   note?: string;
   stats: SessionCardStat[];
-  imageUri?: string;
+  imageSource?: ImageSourcePropType;
   onPress: () => void;
 }
 
 /** Compact card: time + order pill, drill name, note, and a 3-stat row. Used in session log day groups. */
-export function SessionCard({ time, orderLabel, drillName, note, stats, imageUri, onPress }: SessionCardProps) {
+export function SessionCard({ time, orderLabel, drillName, note, stats, imageSource, onPress }: SessionCardProps) {
   return (
     <Pressable
       onPress={onPress}
@@ -25,8 +25,8 @@ export function SessionCard({ time, orderLabel, drillName, note, stats, imageUri
       accessibilityRole="button"
       accessibilityLabel={`${drillName} at ${time}`}
     >
-      {imageUri ? (
-        <ImageBackground source={{ uri: imageUri }} style={StyleSheet.absoluteFill}>
+      {imageSource ? (
+        <ImageBackground source={imageSource} style={StyleSheet.absoluteFill}>
           <View style={styles.scrim} />
         </ImageBackground>
       ) : (
