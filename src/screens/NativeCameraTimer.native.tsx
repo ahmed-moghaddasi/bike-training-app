@@ -1,4 +1,4 @@
-import * as MediaLibrary from 'expo-media-library';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import {
@@ -24,10 +24,10 @@ export type NativeCameraTimerProps = {
   onCancel: () => void;
 };
 
-async function saveToAlbum(filePath: string) {
+async function saveToAlbum(filePath: string): Promise<boolean> {
   try {
     const { status } = await MediaLibrary.requestPermissionsAsync();
-    if (status !== 'granted') return;
+    if (status !== 'granted') return false;
     const asset = await MediaLibrary.createAssetAsync(`file://${filePath}`);
     const album = await MediaLibrary.getAlbumAsync('Bike Training');
     if (album == null) {
@@ -35,8 +35,10 @@ async function saveToAlbum(filePath: string) {
     } else {
       await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
     }
+    return true;
   } catch (e) {
     console.warn('[NativeCameraTimer] auto-save failed', e);
+    return false;
   }
 }
 
@@ -111,25 +113,26 @@ export function NativeCameraTimer({ drill, setup, currentBike, onSessionComplete
 
       await recorder.startRecording(
         (filePath) => {
-          // Auto-save to camera roll in the background — don't block the summary.
-          void saveToAlbum(filePath);
+          void (async () => {
+            const videoSaved = await saveToAlbum(filePath);
 
-          const draft: SessionDraft = {
-            drillId: drill.id,
-            setupVariantId: setup.id,
-            bikeId: currentBike.id,
-            laps: [],
-            videoUri: `file://${filePath}`,
-            videoSaved: true,
-            videoSizeBytes: undefined,
-            videoDurationSeconds: recorder.recordedDuration,
-            recordingStopReason: 'user',
-            startedAt: startedAtRef.current,
-            endedAt: new Date().toISOString(),
-            detectionEvents: [],
-            needsProcessing: true,
-          };
-          onSessionComplete(draft);
+            const draft: SessionDraft = {
+              drillId: drill.id,
+              setupVariantId: setup.id,
+              bikeId: currentBike.id,
+              laps: [],
+              videoUri: `file://${filePath}`,
+              videoSaved,
+              videoSizeBytes: undefined,
+              videoDurationSeconds: recorder.recordedDuration,
+              recordingStopReason: 'user',
+              startedAt: startedAtRef.current,
+              endedAt: new Date().toISOString(),
+              detectionEvents: [],
+              needsProcessing: true,
+            };
+            onSessionComplete(draft);
+          })();
         },
         (error) => {
           console.error('[NativeCameraTimer] recording error', error);
