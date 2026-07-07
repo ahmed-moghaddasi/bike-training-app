@@ -17,25 +17,20 @@
     "expo-status-bar": "~56.0.4",
     "expo-video": "~56.1.4",
     "react": "19.2.3",
-    "react-dom": "19.2.3",
     "react-native": "0.85.3",
     "react-native-nitro-image": "^0.15.1",
     "react-native-nitro-modules": "^0.36.1",
     "react-native-svg": "15.15.4",
-    "react-native-vision-camera": "^5.1.0",
-    "react-native-web": "^0.21.2"
+    "react-native-vision-camera": "^5.1.0"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
     "typescript": "~6.0.3"
   },
   "scripts": {
-    "start": "expo start",
-    "dev:web": "expo start --web",
+    "start": "expo start --dev-client",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web",
-    "export:web": "expo export --platform web",
     "check": "tsc --noEmit"
   },
   "private": true

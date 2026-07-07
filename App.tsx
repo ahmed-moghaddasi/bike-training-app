@@ -5,7 +5,6 @@ import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Dimensions,
-  Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -13,7 +12,6 @@ import {
   Text,
   TextInput,
   View,
-  type ViewStyle,
 } from 'react-native';
 import { LineChart } from './src/components/LineChart';
 import { HomeScreenV2 } from './src/screens/HomeScreenV2';
@@ -25,23 +23,6 @@ import { SessionLogScreen } from './src/screens/SessionLogScreen';
 import { ProgressionScreen, DrillProgressScreen } from './src/screens/ProgressionScreen';
 import { bikes, drills } from './src/data/seed';
 import { formatLap } from './src/lib/metrics';
-import { detectLapsFromVideo, type LapDetectionDiagnostics } from './src/lib/lapDetector';
-import { detectLoopLaps } from './src/lib/loopDetector';
-import { DEFAULT_STRAIGHT_LINE_CONFIG } from './src/lib/straightLineDetector';
-import { getDetectionConfigForDrill } from './src/lib/detection';
-import { computeCropRectRatio } from './src/lib/detection/geometry';
-import {
-  CAMERA_MEDIA_CONSTRAINTS,
-  formatFileSize,
-  getMediaRecorderOptions,
-  MAX_RECORDING_DURATION_MS,
-} from './src/lib/recording';
-import { shareOrDownloadVideo } from './src/lib/localVideo';
-// The default `expo-media-library` entry now points at a "Next" class-based API whose native
-// module lookup runs eagerly at import time with no web shim — it throws immediately on web,
-// before React ever renders, producing a blank page with no console error. `/legacy` has a
-// proper `.web.js` stub for this exact cross-platform case.
-import * as MediaLibrary from 'expo-media-library/legacy';
 import { NativeVideoPreview } from './src/components/NativeVideoPreview';
 import {
   attachSessionNotes,
@@ -53,11 +34,10 @@ import {
   loadSavedSessions,
   markSessionError,
   triggerServerProcessing,
-  uploadDebugReport,
   uploadSessionVideo,
 } from './src/lib/supabase';
 import { colors, fonts, radius, shadows, spacing, tracking } from './src/theme';
-import type { Bike, DetectionEvent, Drill, Lap, ProcessingJob, Route, Session, SessionDraft, SetupVariant } from './src/types';
+import type { Bike, Drill, Lap, ProcessingJob, Route, Session, SessionDraft, SetupVariant } from './src/types';
 
 const routeTitles: Record<Route['name'], string> = {
   home: 'Apex Lab',
@@ -73,10 +53,6 @@ const routeTitles: Record<Route['name'], string> = {
 
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
-
-function isDebugReprocessMode() {
-  return typeof window !== 'undefined' && window.location != null && new URLSearchParams(window.location.search).get('debug') === 'reprocess';
-}
 
 function createJobId() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
@@ -148,15 +124,6 @@ export default function App() {
 
   if (!fontsLoaded) {
     return null;
-  }
-
-  if (isDebugReprocessMode()) {
-    return (
-      <SafeAreaView style={styles.screen}>
-        <StatusBar style="dark" />
-        <DebugReprocessScreen />
-      </SafeAreaView>
-    );
   }
 
   const isLegacyScreen = route.name === 'camera' || route.name === 'summary';
@@ -325,353 +292,16 @@ function CameraScreen({ drillId, currentBike, go }: { drillId: string; currentBi
   const drill = drills.find((item) => item.id === drillId) ?? drills[0];
   const setup = drill.setupVariants.find((variant) => variant.id === drill.defaultSetupVariantId) ?? drill.setupVariants[0];
 
-  if (Platform.OS !== 'web') {
-    return (
-      <NativeCameraTimer
-        drill={drill}
-        setup={setup}
-        currentBike={currentBike}
-        onSessionComplete={(draft) => go({ name: 'summary', drillId, draft, returnTo: { name: 'drill', drillId } })}
-        onCancel={() => go({ name: 'drill', drillId })}
-      />
-    );
-  }
-
-  return <WebCameraTimer drill={drill} setup={setup} currentBike={currentBike} go={go} />;
-}
-
-function WebCameraTimer({
-  drill,
-  setup,
-  currentBike,
-  go,
-}: {
-  drill: Drill;
-  setup: SetupVariant;
-  currentBike: Bike;
-  go: (route: Route) => void;
-}) {
-  const detection = getDetectionConfigForDrill(drill.id);
-  const cropRatio = computeCropRectRatio(detection);
-  const toPercent = (value: number) => `${(value * 100).toFixed(2)}%` as `${number}%`;
-  const zoneBoxStyle: ViewStyle = {
-    left: toPercent(cropRatio.left),
-    top: toPercent(cropRatio.top),
-    width: toPercent(cropRatio.width),
-    height: toPercent(cropRatio.height),
-  };
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const recordingStartedAtRef = useRef<string>(new Date().toISOString());
-  const recordingStartPerformanceRef = useRef(0);
-  const recordingStopReasonRef = useRef<'user' | 'maxDuration'>('user');
-  const wakeLockRef = useRef<{ release: () => Promise<void> } | null>(null);
-  const shouldRouteOnStopRef = useRef(false);
-
-  const [cameraState, setCameraState] = useState<'loading' | 'ready' | 'recording' | 'error'>('loading');
-  const [cameraMessage, setCameraMessage] = useState('Requesting camera permission...');
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-
-  function clearMaxDurationTimer() {
-    if (maxDurationTimerRef.current) {
-      clearTimeout(maxDurationTimerRef.current);
-      maxDurationTimerRef.current = null;
-    }
-  }
-
-  function stopElapsedTimer() {
-    if (elapsedTimerRef.current) {
-      clearInterval(elapsedTimerRef.current);
-      elapsedTimerRef.current = null;
-    }
-  }
-
-  async function releaseWakeLock() {
-    const wakeLock = wakeLockRef.current;
-    wakeLockRef.current = null;
-    if (wakeLock) {
-      try {
-        await wakeLock.release();
-      } catch {
-        // The browser may already have revoked it.
-      }
-    }
-  }
-
-  function stopCameraTracks() {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-  }
-
-  function cleanupCamera() {
-    stopElapsedTimer();
-    clearMaxDurationTimer();
-    void releaseWakeLock();
-    stopCameraTracks();
-  }
-
-  async function startCamera() {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setCameraState('error');
-      setCameraMessage('This browser does not support camera access.');
-      return;
-    }
-
-    try {
-      setCameraState('loading');
-      setCameraMessage('Requesting camera permission...');
-      const stream = await navigator.mediaDevices.getUserMedia(CAMERA_MEDIA_CONSTRAINTS);
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      setCameraState('ready');
-      setCameraMessage(drill.cameraPlacement.detectionZoneSuggestion);
-    } catch (error) {
-      setCameraState('error');
-      setCameraMessage(error instanceof Error ? error.message : 'Camera permission was not granted.');
-    }
-  }
-
-  async function requestWakeLock() {
-    const webNavigator = navigator as Navigator & { wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> } };
-    if (!webNavigator.wakeLock) return;
-    try {
-      wakeLockRef.current = await webNavigator.wakeLock.request('screen');
-    } catch {
-      wakeLockRef.current = null;
-    }
-  }
-
-  function buildDraft(reason: 'user' | 'maxDuration', videoBlob?: Blob): SessionDraft {
-    const videoUri = videoBlob && videoBlob.size > 0 ? URL.createObjectURL(videoBlob) : undefined;
-    const videoDurationSeconds = recordingStartPerformanceRef.current
-      ? Math.max(0, (performance.now() - recordingStartPerformanceRef.current) / 1000)
-      : 0;
-    return {
-      drillId: drill.id,
-      setupVariantId: setup.id,
-      bikeId: currentBike.id,
-      laps: [],
-      videoUri,
-      videoSaved: Boolean(videoUri),
-      videoSizeBytes: videoBlob?.size,
-      videoDurationSeconds,
-      recordingStopReason: reason,
-      startedAt: recordingStartedAtRef.current,
-      endedAt: new Date().toISOString(),
-      detectionEvents: [],
-      needsProcessing: Boolean(videoUri),
-    };
-  }
-
-  function startMediaRecorder() {
-    recordingStartedAtRef.current = new Date().toISOString();
-    recordingStartPerformanceRef.current = performance.now();
-    chunksRef.current = [];
-    recordingStopReasonRef.current = 'user';
-    setElapsedSeconds(0);
-    elapsedTimerRef.current = setInterval(() => {
-      setElapsedSeconds(Math.floor((performance.now() - recordingStartPerformanceRef.current) / 1000));
-    }, 250);
-
-    if (!streamRef.current || !('MediaRecorder' in window)) {
-      setCameraState('recording');
-      setCameraMessage('Recording without video support — laps cannot be detected for this run.');
-      return;
-    }
-
-    try {
-      const recorder = new MediaRecorder(streamRef.current, getMediaRecorderOptions());
-      recorderRef.current = recorder;
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data);
-      };
-      recorder.onstop = () => {
-        clearMaxDurationTimer();
-        const blobType = recorder.mimeType || chunksRef.current[0]?.type || 'video/mp4';
-        const videoBlob = new Blob(chunksRef.current, { type: blobType });
-        const draft = buildDraft(recordingStopReasonRef.current, videoBlob);
-        cleanupCamera();
-        recorderRef.current = null;
-        if (shouldRouteOnStopRef.current) {
-          shouldRouteOnStopRef.current = false;
-          go({ name: 'summary', drillId: drill.id, draft, returnTo: { name: 'drill', drillId: drill.id } });
-        }
-      };
-      recorder.start(1000);
-      maxDurationTimerRef.current = setTimeout(() => endRecording('maxDuration'), MAX_RECORDING_DURATION_MS);
-      setCameraState('recording');
-      setCameraMessage('Recording. Ride your laps, then End Session.');
-    } catch (error) {
-      recorderRef.current = null;
-      setCameraState('recording');
-      setCameraMessage(error instanceof Error ? `Recording without video: ${error.message}` : 'Recording without video.');
-    }
-  }
-
-  async function startRecording() {
-    if (!streamRef.current) {
-      await startCamera();
-      if (!streamRef.current) return;
-    }
-    void requestWakeLock();
-    startMediaRecorder();
-  }
-
-  function endRecording(reason: 'user' | 'maxDuration' = 'user') {
-    recordingStopReasonRef.current = reason;
-    shouldRouteOnStopRef.current = true;
-    stopElapsedTimer();
-    const recorder = recorderRef.current;
-    if (recorder && recorder.state !== 'inactive') {
-      recorder.stop();
-      return;
-    }
-    const draft = buildDraft(reason);
-    cleanupCamera();
-    go({ name: 'summary', drillId: drill.id, draft, returnTo: { name: 'drill', drillId: drill.id } });
-  }
-
-  useEffect(() => {
-    void startCamera();
-    return () => {
-      shouldRouteOnStopRef.current = false;
-      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-        recorderRef.current.onstop = null;
-        recorderRef.current.stop();
-      }
-      cleanupCamera();
-    };
-  }, []);
-
-  const elapsedLabel = `${Math.floor(elapsedSeconds / 60)
-    .toString()
-    .padStart(2, '0')}:${(elapsedSeconds % 60).toString().padStart(2, '0')}`;
-
   return (
-    <Page title="Camera Timer" subtitle={`${drill.name} · ${setup.name}`}>
-      <View style={styles.cameraShell}>
-        <View style={styles.recRow}>
-          <Text style={styles.recText}>{cameraState === 'recording' ? 'REC' : 'Aim Camera'}</Text>
-          <Text style={styles.recText}>{cameraState === 'recording' ? elapsedLabel : ''}</Text>
-        </View>
-        <View style={[styles.cameraView, drill.timingRule.detectionMode === 'straight-line' && styles.cameraViewWide]}>
-          {React.createElement('video', {
-            ref: videoRef,
-            autoPlay: true,
-            muted: true,
-            playsInline: true,
-            style: {
-              height: '100%',
-              left: 0,
-              objectFit: 'cover',
-              position: 'absolute',
-              top: 0,
-              width: '100%',
-            },
-          })}
-          {drill.timingRule.detectionMode === 'straight-line' ? (
-            <StraightLineSetupOverlay />
-          ) : (
-            <View style={[styles.timingZoneBox, zoneBoxStyle]}>
-              <View style={detection.orientation === 'vertical' ? styles.timingLineVertical : styles.timingLineHorizontal} />
-            </View>
-          )}
-          {cameraState !== 'ready' && cameraState !== 'recording' && <Text style={styles.cameraOverlay}>{cameraState === 'error' ? 'Camera Error' : 'Loading'}</Text>}
-        </View>
-        <Text style={styles.cameraTip}>{cameraMessage}</Text>
-      </View>
-      {cameraState === 'error' && <SecondaryButton label="Retry Camera" onPress={() => void startCamera()} />}
-      {cameraState === 'recording' ? (
-        <PrimaryButton label="End Session" onPress={() => endRecording('user')} />
-      ) : (
-        <PrimaryButton label="Start Recording" onPress={() => void startRecording()} />
-      )}
-    </Page>
+    <NativeCameraTimer
+      drill={drill}
+      setup={setup}
+      currentBike={currentBike}
+      onSessionComplete={(draft) => go({ name: 'summary', drillId, draft, returnTo: { name: 'drill', drillId } })}
+      onCancel={() => go({ name: 'drill', drillId })}
+    />
   );
 }
-
-function StraightLineSetupOverlay() {
-  const cfg = DEFAULT_STRAIGHT_LINE_CONFIG;
-  const frameWidthM = 2 * cfg.cameraDistanceMeters * Math.tan((cfg.estimatedHFOVDegrees / 2) * (Math.PI / 180));
-  const halfM = Math.floor(frameWidthM / 2);
-  const bandTop = `${((cfg.bandCenterRatio - cfg.bandRatio / 2) * 100).toFixed(0)}%` as `${number}%`;
-  const bandHeight = `${(cfg.bandRatio * 100).toFixed(0)}%` as `${number}%`;
-
-  return (
-    <View style={styles.slOverlay} pointerEvents="none">
-      {/* Approach zone — left half */}
-      <View style={styles.slApproachZone} />
-      {/* Stop zone — right half */}
-      <View style={styles.slStopZone} />
-      {/* Detection band — horizontal strip showing where luminance is sampled */}
-      <View style={[styles.slBand, { top: bandTop, height: bandHeight }]} />
-      {/* Cone line — center of frame, where the braking marker should appear */}
-      <View style={styles.slConeLine} />
-      {/* Labels */}
-      <View style={[styles.slLabelWrap, { left: '4%', top: '18%' }]}>
-        <Text style={styles.slLabel}>{`← ${halfM} m`}</Text>
-        <Text style={styles.slLabelSub}>approach</Text>
-      </View>
-      <View style={[styles.slLabelWrap, { alignItems: 'flex-end', right: '4%', top: '18%' }]}>
-        <Text style={styles.slLabel}>{`${halfM} m →`}</Text>
-        <Text style={styles.slLabelSub}>stop zone</Text>
-      </View>
-      <View style={styles.slConeLabel}>
-        <Text style={styles.slConeLabelText}>▲ cone</Text>
-      </View>
-      {/* Distance note */}
-      <View style={styles.slNote}>
-        <Text style={styles.slNoteText}>{`Camera ${cfg.cameraDistanceMeters} m from riding line · ${halfM} m each side of cone`}</Text>
-      </View>
-    </View>
-  );
-}
-
-/** How long the flash stays visible after the video reaches a detection event's timestamp. */
-const LAP_FLASH_WINDOW_SECONDS = 0.5;
-
-/**
- * Overlays a brief flash on a video preview exactly when playback crosses a
- * detected crossing's timestamp, so watching the clip back makes it obvious
- * where the detector fired versus where the rider thinks a lap happened.
- */
-function LapFlashOverlay({ videoRef, events }: { videoRef: React.RefObject<HTMLVideoElement | null>; events: DetectionEvent[] }) {
-  const [activeLabel, setActiveLabel] = useState<string | null>(null);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || events.length === 0) {
-      setActiveLabel(null);
-      return;
-    }
-    function handleTimeUpdate() {
-      const t = video!.currentTime;
-      const match = events.find((event) => t >= event.videoTimestamp && t - event.videoTimestamp < LAP_FLASH_WINDOW_SECONDS);
-      setActiveLabel(match ? (match.eventType === 'lapDetected' ? `LAP ${match.lapNumber}` : 'START') : null);
-    }
-    video.addEventListener('timeupdate', handleTimeUpdate);
-    return () => video.removeEventListener('timeupdate', handleTimeUpdate);
-  }, [videoRef, events]);
-
-  if (!activeLabel) return null;
-
-  return (
-    <View style={styles.lapFlashOverlay} pointerEvents="none">
-      <Text style={styles.lapFlashText}>{activeLabel}</Text>
-    </View>
-  );
-}
-
 
 function SessionSummaryScreen({
   drillId,
@@ -697,9 +327,6 @@ function SessionSummaryScreen({
   const [notes, setNotes] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const [localVideoStatus, setLocalVideoStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const [localVideoMessage, setLocalVideoMessage] = useState<string | null>(null);
-  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
 
   // Lap detection now happens server-side (see JobRunner in App.tsx) — this
   // screen no longer waits to show laps; it just confirms the upload and
@@ -715,44 +342,6 @@ function SessionSummaryScreen({
         : null);
   const mockTimes = mockLaps.map((lap) => lap.time);
   const mockBest = mockTimes.length ? Math.min(...mockTimes) : undefined;
-
-  async function saveVideoToDevice() {
-    if (!draft?.videoUri) return;
-    try {
-      setLocalVideoStatus('saving');
-      setLocalVideoMessage(null);
-      if (Platform.OS !== 'web') {
-        const { status } = await MediaLibrary.requestPermissionsAsync();
-        if (status !== 'granted') {
-          setLocalVideoStatus('error');
-          setLocalVideoMessage('Camera roll permission is required to save the video.');
-          return;
-        }
-        await MediaLibrary.saveToLibraryAsync(draft.videoUri);
-        setLocalVideoStatus('saved');
-        setLocalVideoMessage('Video saved to your camera roll.');
-        return;
-      }
-      const response = await fetch(draft.videoUri);
-      const blob = await response.blob();
-      const extension = blob.type.includes('webm') ? 'webm' : 'mp4';
-      const filename = `apex-lab-${drill.id}-${draft.startedAt.replace(/[:.]/g, '-')}.${extension}`;
-      const result = await shareOrDownloadVideo(blob, filename);
-      if (result === 'shared' || result === 'downloaded') {
-        setLocalVideoStatus('saved');
-        setLocalVideoMessage(result === 'shared' ? 'Video shared to your device.' : 'Video downloaded to your device.');
-      } else if (result === 'cancelled') {
-        setLocalVideoStatus('idle');
-        setLocalVideoMessage(null);
-      } else {
-        setLocalVideoStatus('error');
-        setLocalVideoMessage('Your browser does not support saving video to this device.');
-      }
-    } catch (error) {
-      setLocalVideoStatus('error');
-      setLocalVideoMessage(error instanceof Error ? error.message : 'Could not save the video.');
-    }
-  }
 
   async function saveRecordedSession() {
     if (effectiveSaveStatus === 'saved') {
@@ -816,20 +405,7 @@ function SessionSummaryScreen({
         {job?.status === 'error' && (
           <Text style={[styles.bodyText, styles.saveMessageError]}>Could not upload this recording for processing. The video is still available below.</Text>
         )}
-        {draft?.videoUri && Platform.OS === 'web' ? (
-          React.createElement('video', {
-            ref: previewVideoRef,
-            src: draft.videoUri,
-            controls: true,
-            playsInline: true,
-            style: {
-              backgroundColor: colors.black,
-              borderRadius: radius.md,
-              display: 'block',
-              width: '100%',
-            },
-          })
-        ) : draft?.videoUri ? (
+        {draft?.videoUri ? (
           <NativeVideoPreview
             uri={draft.videoUri}
             drillName={drill.name}
@@ -838,28 +414,12 @@ function SessionSummaryScreen({
         ) : (
           <Text style={styles.bodyText}>{'Saved · placeholder recording attached to this mock session.'}</Text>
         )}
-        {draft?.videoUri && Platform.OS === 'web' && (
-          <>
-            <View style={styles.videoSaveRow}>
-              <View style={styles.videoSaveCopy}>
-                <Text style={styles.cardTitle}>{localVideoStatus === 'saved' ? 'Saved to your device' : 'This app does not store video'}</Text>
-                <Text style={styles.cardSub}>
-                  {draft.videoSizeBytes !== undefined ? formatFileSize(draft.videoSizeBytes) : 'Size unavailable'}
-                  {draft.videoDurationSeconds !== undefined ? ` · ${Math.round(draft.videoDurationSeconds)}s` : ''}
-                </Text>
-              </View>
-              <SecondaryButton
-                label={localVideoStatus === 'saving' ? 'Saving...' : localVideoStatus === 'saved' ? 'Saved' : 'Save Video to Device'}
-                onPress={() => void saveVideoToDevice()}
-              />
-            </View>
-            {localVideoMessage && (
-              <Text style={[styles.saveMessage, localVideoStatus === 'error' && styles.saveMessageError]}>{localVideoMessage}</Text>
-            )}
-          </>
-        )}
-        {draft?.videoUri && Platform.OS !== 'web' && (
-          <Text style={styles.bodyText}>Auto-saved to the "Bike Training" album in your camera roll.</Text>
+        {draft?.videoUri && (
+          <Text style={styles.bodyText}>
+            {draft.videoSaved
+              ? 'Auto-saved to the "Bike Training" album in your camera roll.'
+              : 'Could not save to your camera roll — check camera roll permission in Settings.'}
+          </Text>
         )}
         {draft?.recordingStopReason === 'maxDuration' && <Text style={styles.cameraTip}>Recording stopped at the 8-minute limit.</Text>}
       </Section>
@@ -898,188 +458,6 @@ function SessionSummaryScreen({
   );
 }
 
-/**
- * Dev-only tool (visit ?debug=reprocess): runs detectLapsFromVideo against a
- * video file picked from disk instead of a fresh recording, so the detector
- * can be iterated on against the same real clip without re-riding each time.
- */
-function DebugReprocessScreen() {
-  const [selectedDrillId, setSelectedDrillId] = useState(drills[0]?.id ?? 'circle');
-  const [videoUri, setVideoUri] = useState<string | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [status, setStatus] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
-  const [laps, setLaps] = useState<Lap[]>([]);
-  const [events, setEvents] = useState<DetectionEvent[]>([]);
-  const [diagnostics, setDiagnostics] = useState<LapDetectionDiagnostics | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'uploaded' | 'error'>('idle');
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
-
-  const drill = drills.find((item) => item.id === selectedDrillId) ?? drills[0];
-  const times = laps.map((lap) => lap.time);
-  const best = times.length ? Math.min(...times) : undefined;
-
-  // Lets a headless/automated run load a video by URL instead of through the
-  // file picker, e.g. ?debug=reprocess&videoUrl=http://localhost:PORT/clip.mp4&drill=circle&autorun=1
-  useEffect(() => {
-    if (typeof window === 'undefined' || window.location == null) return;
-    const params = new URLSearchParams(window.location.search);
-    const videoUrlParam = params.get('videoUrl');
-    const drillParam = params.get('drill');
-    const autorun = params.get('autorun') === '1';
-    if (drillParam) setSelectedDrillId(drillParam);
-    if (!videoUrlParam) return;
-
-    let cancelled = false;
-    (async () => {
-      try {
-        const response = await fetch(videoUrlParam);
-        const blob = await response.blob();
-        if (cancelled) return;
-        const uri = URL.createObjectURL(blob);
-        setVideoUri(uri);
-        setFileName(videoUrlParam.split('/').pop() ?? 'video');
-        if (autorun) await runDetection(uri, drillParam ?? undefined);
-      } catch (error) {
-        if (cancelled) return;
-        setStatus('error');
-        setErrorMessage(error instanceof Error ? error.message : 'Could not load video from URL.');
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function handleFileChange(event: { target: { files?: FileList | null } }) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (videoUri) URL.revokeObjectURL(videoUri);
-    setVideoUri(URL.createObjectURL(file));
-    setFileName(file.name);
-    setStatus('idle');
-    setLaps([]);
-    setEvents([]);
-    setDiagnostics(null);
-    setErrorMessage(null);
-    setUploadStatus('idle');
-  }
-
-  async function runDetection(overrideUri?: string, overrideDrillId?: string) {
-    const uri = overrideUri ?? videoUri;
-    if (!uri) return;
-    const targetDrill = drills.find((item) => item.id === (overrideDrillId ?? selectedDrillId)) ?? drills[0];
-    setStatus('processing');
-    setErrorMessage(null);
-    try {
-      const result =
-        targetDrill.id === 'loop'
-          ? await detectLoopLaps(uri, { recordingStartedAt: new Date().toISOString() })
-          : await detectLapsFromVideo(uri, {
-              detection: getDetectionConfigForDrill(targetDrill.id),
-              detectionsPerLap: targetDrill.timingRule.detectionsPerLap ?? 1,
-              recordingStartedAt: new Date().toISOString(),
-            });
-      setLaps(result.laps);
-      setEvents(result.detectionEvents);
-      setDiagnostics(result.diagnostics);
-      setStatus('done');
-      setUploadStatus('uploading');
-      const uploadResult = await uploadDebugReport({
-        drillId: targetDrill.id,
-        startedAt: new Date().toISOString(),
-        payload: { source: 'manual-reprocess', fileName, laps: result.laps, detectionEvents: result.detectionEvents, diagnostics: result.diagnostics },
-      });
-      setUploadStatus(uploadResult.ok ? 'uploaded' : 'error');
-      setUploadError(uploadResult.ok ? null : uploadResult.error ?? 'Unknown error.');
-    } catch (error) {
-      setStatus('error');
-      setErrorMessage(error instanceof Error ? error.message : 'Could not process this video.');
-    }
-  }
-
-  function downloadReport() {
-    if (!diagnostics) return;
-    const payload = { drillId: drill.id, fileName, laps, detectionEvents: events, diagnostics };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `apex-lab-reprocess-${drill.id}-${Date.now()}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
-  return (
-    <Page title="Debug: Reprocess Video" subtitle="Re-run the detector against a saved clip without re-recording.">
-      <Section label="Drill">
-        <View style={styles.drillGrid}>
-          {drills.map((item) => (
-            <Pressable key={item.id} style={styles.contextPill} onPress={() => setSelectedDrillId(item.id)}>
-              <Text style={styles.contextPillText}>{item.name}{item.id === selectedDrillId ? ' (selected)' : ''}</Text>
-            </Pressable>
-          ))}
-        </View>
-      </Section>
-
-      <Section label="Video File">
-        {Platform.OS === 'web' &&
-          React.createElement('input', {
-            type: 'file',
-            accept: 'video/*',
-            onChange: handleFileChange,
-          })}
-        {fileName && <Text style={styles.bodyText}>{fileName}</Text>}
-        {videoUri && Platform.OS === 'web' && (
-          <View style={[styles.videoPreviewWrapper, { marginTop: 12 }]}>
-            {React.createElement('video', {
-              ref: previewVideoRef,
-              src: videoUri,
-              controls: true,
-              playsInline: true,
-              style: { backgroundColor: colors.black, borderRadius: radius.md, display: 'block', width: '100%' },
-            })}
-            <LapFlashOverlay videoRef={previewVideoRef} events={events} />
-          </View>
-        )}
-      </Section>
-
-      <PrimaryButton label={status === 'processing' ? 'Processing...' : 'Run Detection'} onPress={() => void runDetection()} />
-      {status === 'error' && <Text style={[styles.saveMessage, styles.saveMessageError]}>{errorMessage}</Text>}
-
-      {status === 'done' && diagnostics && (
-        <>
-          <StatGrid
-            items={[
-              ['Best', best ? `${formatLap(best)}s` : '--'],
-              ['Laps', String(laps.length)],
-              ['Frames', String(diagnostics.frameCount)],
-            ]}
-          />
-          <Section label="Lap Times">
-            {laps.length ? <LapList laps={laps} /> : <EmptyState title="No laps detected" body="The detector found no confirmed crossings in this clip." />}
-          </Section>
-          <Section label="Debug Data">
-            <Text style={styles.cardSub}>
-              max ratio {diagnostics.maxPrimaryRatio.toFixed(3)} / {diagnostics.maxSecondaryRatio.toFixed(3)} (threshold {diagnostics.config.changedRatioThreshold}) ·{' '}
-              {diagnostics.candidates.length} candidates
-            </Text>
-            <SecondaryButton label="Export Debug Data" onPress={downloadReport} />
-            {uploadStatus !== 'idle' && (
-              <Text style={[styles.saveMessage, uploadStatus === 'error' && styles.saveMessageError]}>
-                {uploadStatus === 'uploading' ? 'Uploading debug report to Supabase...' : uploadStatus === 'uploaded' ? 'Debug report uploaded to Supabase.' : `Upload failed: ${uploadError}`}
-              </Text>
-            )}
-          </Section>
-        </>
-      )}
-    </Page>
-  );
-}
 function Page({ children, title, subtitle }: { children: React.ReactNode; title?: string; subtitle?: string }) {
   return (
     <ScrollView contentContainerStyle={styles.page} showsVerticalScrollIndicator={false}>
